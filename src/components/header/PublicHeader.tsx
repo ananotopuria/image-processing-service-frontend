@@ -1,7 +1,11 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
+import { useAuth } from "../../auth/useAuth";
 import Logo from "../../assets/logo1.png";
 
 function PublicHeader() {
+  const { isAuthenticated, logout } = useAuth();
+  const navigate = useNavigate();
+
   return (
     <header className="border-b border-current/15">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-3 px-6 py-4">
@@ -38,12 +42,22 @@ function PublicHeader() {
           </NavLink>
         </nav>
 
-        <NavLink
-          to="/login"
-          className="shrink-0 whitespace-nowrap rounded-sm border border-current/25 px-5 py-2"
-        >
-          Sign in
-        </NavLink>
+        {isAuthenticated ? (
+          <button
+            type="button"
+            onClick={() => { logout(); navigate("/", { replace: true }); }}
+            className="min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded-sm border border-current/25 px-5 py-2 focus-visible:outline-2 focus-visible:outline-offset-4"
+          >
+            Sign out
+          </button>
+        ) : (
+          <NavLink
+            to="/login"
+            className="shrink-0 whitespace-nowrap rounded-sm border border-current/25 px-5 py-2"
+          >
+            Sign in
+          </NavLink>
+        )}
       </div>
     </header>
   );

@@ -1,5 +1,12 @@
+import AuthForm from "../components/auth/AuthForm";
+import AuthLayout from "../components/auth/AuthLayout";
+
 function Login() {
-  return <h1>Login</h1>;
+  return (
+    <AuthLayout mode="login">
+      <AuthForm mode="login" />
+    </AuthLayout>
+  );
 }
 
 export default Login;

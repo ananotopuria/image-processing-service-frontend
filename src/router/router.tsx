@@ -2,6 +2,7 @@ import { createBrowserRouter } from "react-router-dom";
 
 import PublicLayout from "../layouts/PublicLayout";
 import AppLayout from "../layouts/AppLayout";
+import ProtectedRoute from "../auth/ProtectedRoute";
 
 import Home from "../pages/Home";
 import Pricing from "../pages/Pricing";
@@ -33,15 +34,20 @@ export const router = createBrowserRouter([
     ],
   },
   {
-    element: <AppLayout />,
+    element: <ProtectedRoute />,
     children: [
       {
-        path: "/studio",
-        element: <Studio />,
-      },
-      {
-        path: "/history",
-        element: <History />,
+        element: <AppLayout />,
+        children: [
+          {
+            path: "/studio",
+            element: <Studio />,
+          },
+          {
+            path: "/history",
+            element: <History />,
+          },
+        ],
       },
     ],
   },

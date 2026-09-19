@@ -1,5 +1,8 @@
 # React + TypeScript + Vite
 
+For Mothframe's backend URL, authentication contract, session behavior, CORS
+requirements, and verification steps, see [Authentication](docs/authentication.md).
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:
