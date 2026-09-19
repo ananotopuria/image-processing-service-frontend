@@ -1,15 +1,18 @@
 import { Outlet } from "react-router-dom";
+import PublicHeader from "./../components/header/PublicHeader";
 
-function AppLayout() {
+function PublicLayout() {
   return (
     <>
-      <header>App Header</header>
+      <PublicHeader />
 
       <main>
         <Outlet />
       </main>
+
+      <footer>Footer</footer>
     </>
   );
 }
 
-export default AppLayout;
+export default PublicLayout;

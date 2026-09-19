@@ -1,1 +1,15 @@
 @import "tailwindcss";
+
+@theme {
+  --color-paper: #f4f0e7;
+  --color-ink: #263536;
+  --color-ink-hover: #3b5050;
+  --color-muted-ink: #606862;
+  --color-archive-line: #cbc5b9;
+  --color-specimen-paper: #e9e9df;
+  --color-specimen-line: #b7bcb0;
+
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-editorial: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --font-mono: "Courier New", monospace;
+}
