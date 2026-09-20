@@ -1,10 +1,12 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { pricingLinkState } from "../../utils/pricing";
 import { useAuth } from "../../auth/useAuth";
 import Logo from "../../assets/logo1.png";
 
 function PublicHeader() {
   const { isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   return (
     <header className="border-b border-current/15">
@@ -40,6 +42,7 @@ function PublicHeader() {
             <NavLink
               key={to}
               to={to}
+              state={to === "/pricing" ? pricingLinkState(location) : undefined}
               className="inline-flex min-h-11 items-center hover:underline aria-[current=page]:underline"
             >
               {label}
