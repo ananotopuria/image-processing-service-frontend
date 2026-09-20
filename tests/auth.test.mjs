@@ -31,6 +31,7 @@ const { getAuthErrorMessage } = await vite.ssrLoadModule("/src/api/errors.ts");
 const { AuthContext } = await vite.ssrLoadModule("/src/auth/AuthContext.ts");
 const { sessionFromAuth, sessionFromProfile } = await vite.ssrLoadModule("/src/auth/session.ts");
 const { default: ProtectedRoute } = await vite.ssrLoadModule("/src/auth/ProtectedRoute.tsx");
+const { default: Dashboard } = await vite.ssrLoadModule("/src/pages/Dashboard.tsx");
 
 after(async () => {
   await vite.close();
@@ -206,13 +207,13 @@ test("shows safe validation/conflict errors and conceals internal server details
   }
 });
 
-function renderGuard(state) {
+function renderGuard(state, guestOnly = false) {
   return renderToStaticMarkup(createElement(AuthContext.Provider, { value: {
     user: null, isAuthenticated: false, isRestoring: false, sessionError: null,
     retrySession() {}, logout() {}, ...state,
   } }, createElement(MemoryRouter, { initialEntries: ["/studio"] },
     createElement(Routes, null,
-      createElement(Route, { element: createElement(ProtectedRoute) },
+      createElement(Route, { element: createElement(ProtectedRoute, { guestOnly }) },
         createElement(Route, { path: "/studio", element: createElement("p", null, "Private studio content") }),
       ),
     ),
@@ -227,4 +228,36 @@ test("protected content waits for session verification and offers retry on conne
   const unavailable = renderGuard({ sessionError: "Unable to reach server" });
   assert.match(unavailable, /Try again/);
   assert.doesNotMatch(unavailable, /Private studio content/);
+});
+
+test("signed-out visitors cannot render protected content", () => {
+  assert.doesNotMatch(renderGuard({}), /Private studio content/);
+});
+
+test("guest-only routes render forms only after confirming a signed-out session", () => {
+  assert.match(renderGuard({}, true), /Private studio content/);
+  assert.doesNotMatch(renderGuard({ isAuthenticated: true }, true), /Private studio content/);
+  const restoring = renderGuard({ isRestoring: true }, true);
+  assert.match(restoring, /Checking your session/);
+  assert.doesNotMatch(restoring, /Private studio content/);
+  const unavailable = renderGuard({ sessionError: "Unable to reach server" }, true);
+  assert.match(unavailable, /Try again/);
+  assert.doesNotMatch(unavailable, /Private studio content/);
+});
+
+test("dashboard greets the returned account and falls back to verified email after refresh", () => {
+  for (const [user, greeting] of [
+    [authResponse.user, "Welcome, reader."],
+    [sessionFromProfile("test-token", { user: { sub: "test-user", email: "reader@example.test" } }).user, "Welcome, reader@example.test."],
+    [{ ...authResponse.user, username: "  " }, "Welcome, reader@example.test."],
+  ]) {
+    const markup = renderToStaticMarkup(createElement(AuthContext.Provider, {
+      value: { user },
+    }, createElement(MemoryRouter, null, createElement(Dashboard))));
+    assert.ok(markup.includes(greeting));
+    assert.match(markup, /href="\/upload"/);
+    assert.match(markup, /href="\/images"/);
+    assert.match(markup, /RESERVED FOR RECENT IMAGES/);
+    assert.match(markup, /Image data is not loaded yet/);
+  }
 });

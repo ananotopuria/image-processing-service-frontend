@@ -1,7 +1,7 @@
 import { Navigate, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "./useAuth";
 
-export default function ProtectedRoute() {
+export default function ProtectedRoute({ guestOnly = false }: { guestOnly?: boolean }) {
   const { isAuthenticated, isRestoring, sessionError, retrySession, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -21,14 +21,18 @@ export default function ProtectedRoute() {
               <button type="button" onClick={retrySession} className="min-h-12 cursor-pointer rounded-sm bg-ink px-5 text-paper focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink">
                 Try again
               </button>
-              <button type="button" onClick={() => { logout(); navigate("/", { replace: true }); }} className="min-h-12 cursor-pointer px-3 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4">
-                Sign out
+              <button type="button" onClick={() => { logout(); navigate("/login", { replace: true }); }} className="min-h-12 cursor-pointer px-3 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4">
+                Logout
               </button>
             </div>
           )}
         </div>
       </div>
     );
+  }
+
+  if (guestOnly) {
+    return isAuthenticated ? <Navigate to="/dashboard" replace /> : <Outlet />;
   }
 
   return isAuthenticated ? <Outlet /> : <Navigate to="/login" replace />;

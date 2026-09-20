@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import PublicLayout from "../layouts/PublicLayout";
 import AppLayout from "../layouts/AppLayout";
@@ -10,6 +10,7 @@ import Login from "../pages/Login";
 import Register from "../pages/Register";
 import Studio from "../pages/Studio";
 import History from "../pages/History";
+import Dashboard from "../pages/Dashboard";
 
 export const router = createBrowserRouter([
   {
@@ -24,12 +25,11 @@ export const router = createBrowserRouter([
         element: <Pricing />,
       },
       {
-        path: "/login",
-        element: <Login />,
-      },
-      {
-        path: "/register",
-        element: <Register />,
+        element: <ProtectedRoute guestOnly />,
+        children: [
+          { path: "/login", element: <Login /> },
+          { path: "/register", element: <Register /> },
+        ],
       },
     ],
   },
@@ -40,12 +40,24 @@ export const router = createBrowserRouter([
         element: <AppLayout />,
         children: [
           {
-            path: "/studio",
+            path: "/dashboard",
+            element: <Dashboard />,
+          },
+          {
+            path: "/upload",
             element: <Studio />,
           },
           {
-            path: "/history",
+            path: "/images",
             element: <History />,
+          },
+          {
+            path: "/studio",
+            element: <Navigate to="/upload" replace />,
+          },
+          {
+            path: "/history",
+            element: <Navigate to="/images" replace />,
           },
         ],
       },

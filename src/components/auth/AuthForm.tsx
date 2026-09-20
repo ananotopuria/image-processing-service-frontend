@@ -70,7 +70,7 @@ function AuthForm({ mode }: { mode: "login" | "register" }) {
       } else {
         await login({ email, password }, controller.signal);
       }
-      if (!controller.signal.aborted) navigate("/studio", { replace: true });
+      if (!controller.signal.aborted) navigate("/dashboard", { replace: true });
     } catch (error: unknown) {
       if (!controller.signal.aborted) setNotice(getAuthErrorMessage(error));
     } finally {

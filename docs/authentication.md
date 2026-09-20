@@ -16,6 +16,10 @@ Set `VITE_API_URL` in the frontend hosting environment **before building** for
 production. Vite embeds this public URL into the bundle; it is not a secret.
 Keep `.env` ignored and never put JWTs or backend secrets in Vite variables.
 
+The root `vercel.json` rewrites frontend routes to `/index.html`, allowing direct
+visits and refreshes on `/dashboard`, `/upload`, `/images`, and the legacy routes.
+API calls still go to the separate origin configured by `VITE_API_URL`.
+
 The backend must be running and allow the frontend origin through CORS. A live
 preflight check on September 19, 2026 from `http://localhost:5173` returned
 `404 Cannot OPTIONS /api/auth/sign-in` without CORS headers. The inspected
@@ -52,13 +56,14 @@ uniqueness check is on email, not username.
 ## Session lifecycle
 
 - Both forms call the real API, persist `accessToken`, update the auth context,
-  and navigate to `/studio` on success. Controls are disabled while submitting;
+  and navigate to `/dashboard` on success. Controls are disabled while submitting;
   a synchronous request guard prevents duplicate submissions. Leaving a form
   cancels its request and prevents a late response from establishing a session.
 - `useAuth().user` holds the real returned account after login or registration.
   On refresh, it contains `id` (from verified `sub`) and `email`; `username` is
   absent because the profile endpoint does not return it. Any future account
-  label can use `user.username ?? user.email`. User details remain in React state.
+  label uses the username when available and falls back to email on the dashboard.
+  User details remain in React state.
 - `src/auth/tokenStorage.ts` centralizes localStorage under
   `mothframe_access_token`. Other tabs receive session changes through storage
   events. No password or user profile is persisted, and JWTs are not decoded.
@@ -66,14 +71,19 @@ uniqueness check is on email, not username.
   interceptor for protected API calls. Authentication POSTs omit it. Future
   calls should import `apiClient` and use paths such as `/api/images`.
 - `AuthProvider` restores a stored session by checking the real profile endpoint.
-  `ProtectedRoute` waits for this check before rendering `/studio` or `/history`.
+  `ProtectedRoute` waits for this check before rendering `/dashboard`, `/upload`,
+  or `/images`. The protected aliases `/studio` and `/history` redirect to
+  `/upload` and `/images`, respectively, preserving existing links.
   Visitors without a token are redirected to `/login` with history replacement.
+  The same guard in `guestOnly` mode waits for initialization on `/login` and
+  `/register`, redirecting authenticated visitors to `/dashboard`.
 - A protected 401 clears the rejected session. A network or server error retains
   the token and shows a retry screen. A failed login or a stale response from a
   previous token does not clear a newer session.
   Token removal also clears the in-memory user, including sign-out in another tab.
-- The shared header offers **Sign out** for an authenticated session. It clears
-  local storage and context, then navigates to `/`. The backend has no logout or
+- The shared header offers Dashboard, Upload, Images / History, Pricing, and
+  **Logout** for an authenticated session. Logout clears
+  local storage and context, then navigates to `/login`. The backend has no logout or
   refresh endpoint, so logout removes the browser session; it does not revoke
   an already-issued JWT on the server.
 
@@ -92,15 +102,25 @@ The build includes TypeScript checking. Auth tests use isolated test storage and
 Axios adapters, without creating real accounts. They check request contracts,
 token persistence and headers, rejected sessions, safe errors, and protected
 content while session verification is pending or unavailable.
+They also cover guest-only form visibility and the dashboard's email fallback.
+Server-rendered guard tests check content visibility; browser navigation and
+deployment rewrites still require the live checks below.
 
 For a live browser check with the configured backend:
 
-1. Open `/studio` and `/history` while signed out; confirm redirect to `/login`.
-2. Register a new account; confirm navigation to Studio.
-3. Reload Studio; confirm profile verification restores access.
-4. Sign out; confirm navigation home and that protected pages are inaccessible.
+1. Open `/dashboard`, `/upload`, `/images`, `/studio`, and `/history` while signed
+   out; confirm redirect to `/login`.
+2. Register a new account; confirm navigation to the dashboard and a username greeting.
+3. Reload the dashboard; confirm profile verification restores access with an email
+   greeting. Confirm `/login` and `/register` return you to the dashboard.
+4. Use Logout; confirm navigation to `/login` and that protected pages are inaccessible.
 5. Sign in again; check invalid credentials and an existing registration email.
 6. Temporarily make the backend unavailable during restoration; confirm the
    retry screen appears without deleting the stored session.
+7. On Vercel, visit and refresh each protected route directly. Confirm legacy
+   `/studio` and `/history` links lead to `/upload` and `/images` after verification.
 
-No image upload, transformation, or history fetching is implemented here.
+The dashboard reserves an area for recent images without claiming any image data
+has been loaded. `/upload` and `/images` are labeled placeholders. No image upload,
+transformation, or history fetching is implemented here; image endpoint contracts
+are outside this change.

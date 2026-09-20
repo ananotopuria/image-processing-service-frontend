@@ -1,6 +1,9 @@
 import { Link } from "react-router-dom";
+import { useAuth } from "../../auth/useAuth";
 
 function PublicFooter() {
+  const { isAuthenticated } = useAuth();
+
   return (
     <footer className="border-t border-current/10">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-6 sm:flex-row sm:items-center sm:justify-between">
@@ -11,8 +14,16 @@ function PublicFooter() {
             {[
               { to: "/", label: "Home" },
               { to: "/pricing", label: "Pricing" },
-              { to: "/login", label: "Sign in" },
-              { to: "/register", label: "Register" },
+              ...(isAuthenticated
+                ? [
+                    { to: "/dashboard", label: "Dashboard" },
+                    { to: "/upload", label: "Upload" },
+                    { to: "/images", label: "Images / History" },
+                  ]
+                : [
+                    { to: "/login", label: "Sign in" },
+                    { to: "/register", label: "Register" },
+                  ]),
             ].map(({ to, label }) => (
               <li key={to}>
                 <Link
