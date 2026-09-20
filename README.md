@@ -2,6 +2,8 @@
 
 For Mothframe's backend URL, authentication contract, session behavior, CORS
 requirements, and verification steps, see [Authentication](docs/authentication.md).
+For the verified upload/transform contract and workspace behavior, see
+[Image processing](docs/image-processing.md).
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

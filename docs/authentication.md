@@ -20,15 +20,14 @@ The root `vercel.json` rewrites frontend routes to `/index.html`, allowing direc
 visits and refreshes on `/dashboard`, `/upload`, `/images`, and the legacy routes.
 API calls still go to the separate origin configured by `VITE_API_URL`.
 
-The backend must be running and allow the frontend origin through CORS. A live
-preflight check on September 19, 2026 from `http://localhost:5173` returned
-`404 Cannot OPTIONS /api/auth/sign-in` without CORS headers. The inspected
-backend `src/main.ts` also has no `enableCors` configuration. Configure
-allowed frontend origins on the backend, including the actual development
-origin and the deployed frontend origin. Allow `Content-Type`, `Authorization`,
-and the API's HTTP methods, and handle preflight requests. This frontend does
-not proxy requests or work around CORS. Browser network errors cannot reliably
-distinguish CORS failures from an unavailable server.
+The backend must be running and allow the frontend origin through CORS. The
+backend source inspected for the upload milestone now configures CORS through
+`src/app.config.ts`, using `CORS_ORIGINS`, permitting `Content-Type` and
+`Authorization`, and handling preflights. Include the actual development and
+deployed frontend origins in that backend setting. Deployed CORS behavior has
+not been reverified. This frontend does not proxy requests or work around CORS.
+Browser network errors cannot reliably distinguish CORS failures from an
+unavailable server.
 
 ## Verified backend contract
 
@@ -121,6 +120,6 @@ For a live browser check with the configured backend:
    `/studio` and `/history` links lead to `/upload` and `/images` after verification.
 
 The dashboard reserves an area for recent images without claiming any image data
-has been loaded. `/upload` and `/images` are labeled placeholders. No image upload,
-transformation, or history fetching is implemented here; image endpoint contracts
-are outside this change.
+has been loaded. `/images` remains a placeholder; no history fetching is implemented.
+`/upload` now implements the separate upload and transform flow documented in
+[Image processing](image-processing.md).
