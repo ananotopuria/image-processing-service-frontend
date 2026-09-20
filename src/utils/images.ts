@@ -1,8 +1,17 @@
-import type { ImageFormat, TransformationSettings, TransformImageRequest } from "../api/images.types";
+import type { ImageFormat, ImageTransformations, TransformationSettings, TransformImageRequest } from "../api/images.types";
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // Exclusive backend limit.
 export const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp";
-export const DEFAULT_SETTINGS: TransformationSettings = { width: "", height: "", quality: 80, format: "webp" };
+export const DEFAULT_SETTINGS: Readonly<TransformationSettings> = Object.freeze({
+  width: "", height: "",
+  cropEnabled: false, cropWidth: "", cropHeight: "", cropX: "", cropY: "",
+  rotate: "", flip: false, mirror: false, grayscale: false, sepia: false,
+  outputEnabled: true, quality: 80, format: "webp",
+});
+
+export function createDefaultSettings(): TransformationSettings {
+  return { ...DEFAULT_SETTINGS };
+}
 
 export class ImageInputError extends Error {}
 
@@ -50,19 +59,97 @@ export function buildTransformRequest(settings: TransformationSettings): Transfo
   }
   const width = dimension(settings.width, "Width");
   const height = dimension(settings.height, "Height");
-  if (!Number.isInteger(settings.quality) || settings.quality < 1 || settings.quality > 100) {
-    throw new ImageInputError("Quality must be a whole number from 1 to 100.");
+  const transformations: ImageTransformations = {};
+  if (width !== undefined || height !== undefined) {
+    transformations.resize = { ...(width !== undefined && { width }), ...(height !== undefined && { height }) };
   }
-  if (!isImageFormat(settings.format)) throw new ImageInputError("Choose WebP, JPEG, or PNG as the output format.");
-  return {
-    transformations: {
-      ...(width !== undefined || height !== undefined ? {
-        resize: { ...(width !== undefined && { width }), ...(height !== undefined && { height }) },
-      } : {}),
-      quality: settings.quality,
-      format: settings.format,
-    },
-  };
+
+  if (settings.cropEnabled) {
+    const cropWidth = dimension(settings.cropWidth, "Crop width");
+    const cropHeight = dimension(settings.cropHeight, "Crop height");
+    if (cropWidth === undefined || cropHeight === undefined) {
+      throw new ImageInputError("Enter both crop width and crop height, or turn crop off.");
+    }
+    function offset(value: string, label: string): number | undefined {
+      if (!value.trim()) return undefined;
+      const number = Number(value);
+      if (!Number.isSafeInteger(number) || number < 0) {
+        throw new ImageInputError(`${label} must be a whole number from 0 to ${Number.MAX_SAFE_INTEGER}, or left empty for 0.`);
+      }
+      return number;
+    }
+    const x = offset(settings.cropX, "Crop X");
+    const y = offset(settings.cropY, "Crop Y");
+    transformations.crop = { width: cropWidth, height: cropHeight, ...(x !== undefined && { x }), ...(y !== undefined && { y }) };
+  }
+
+  if (settings.rotate.trim()) {
+    const rotate = Number(settings.rotate);
+    if (!Number.isFinite(rotate) || rotate < -360 || rotate > 360) {
+      throw new ImageInputError("Rotation must be a number from −360 to 360 degrees, or left empty.");
+    }
+    if (rotate !== 0) transformations.rotate = rotate;
+  }
+  if (settings.flip) transformations.flip = true;
+  if (settings.mirror) transformations.mirror = true;
+  if (settings.grayscale || settings.sepia) {
+    transformations.filters = { ...(settings.grayscale && { grayscale: true }), ...(settings.sepia && { sepia: true }) };
+  }
+  if (settings.outputEnabled) {
+    if (!Number.isInteger(settings.quality) || settings.quality < 1 || settings.quality > 100) {
+      throw new ImageInputError("Quality must be a whole number from 1 to 100.");
+    }
+    if (!isImageFormat(settings.format)) throw new ImageInputError("Choose WebP, JPEG, or PNG as the output format.");
+    transformations.quality = settings.quality;
+    transformations.format = settings.format;
+  }
+  if (Object.keys(transformations).length === 0) {
+    throw new ImageInputError("Choose at least one transformation, or enable custom output to create a new version.");
+  }
+  return { transformations };
+}
+
+// Validate applied metadata before displaying it; historical records may omit it.
+export function isImageTransformations(value: unknown): value is ImageTransformations {
+  const object = (candidate: unknown): candidate is Record<string, unknown> => Boolean(candidate) && typeof candidate === "object" && !Array.isArray(candidate);
+  const keysAllowed = (record: Record<string, unknown>, keys: string[]) => Object.keys(record).every((key) => keys.includes(key));
+  const integer = (number: unknown, min: number, max: number) => typeof number === "number" && Number.isSafeInteger(number) && number >= min && number <= max;
+  if (!object(value) || !keysAllowed(value, ["resize", "crop", "rotate", "flip", "mirror", "quality", "format", "filters"]) || Object.keys(value).length === 0) return false;
+  const { resize, crop, rotate, filters, quality, format } = value;
+  if (resize !== undefined && (!object(resize) || !keysAllowed(resize, ["width", "height"]) ||
+    (resize.width === undefined && resize.height === undefined) ||
+    (resize.width !== undefined && !integer(resize.width, 1, 4000)) ||
+    (resize.height !== undefined && !integer(resize.height, 1, 4000)))) return false;
+  if (crop !== undefined && (!object(crop) || !keysAllowed(crop, ["width", "height", "x", "y"]) ||
+    !integer(crop.width, 1, 4000) || !integer(crop.height, 1, 4000) ||
+    (crop.x !== undefined && !integer(crop.x, 0, Number.MAX_SAFE_INTEGER)) ||
+    (crop.y !== undefined && !integer(crop.y, 0, Number.MAX_SAFE_INTEGER)))) return false;
+  if (rotate !== undefined && (typeof rotate !== "number" || !Number.isFinite(rotate) || rotate < -360 || rotate > 360)) return false;
+  if (value.flip !== undefined && typeof value.flip !== "boolean") return false;
+  if (value.mirror !== undefined && typeof value.mirror !== "boolean") return false;
+  if (quality !== undefined && !integer(quality, 1, 100)) return false;
+  if (format !== undefined && !isImageFormat(format)) return false;
+  if (filters !== undefined && (!object(filters) || !keysAllowed(filters, ["grayscale", "sepia"]) ||
+    (filters.grayscale === undefined && filters.sepia === undefined) ||
+    (filters.grayscale !== undefined && typeof filters.grayscale !== "boolean") ||
+    (filters.sepia !== undefined && typeof filters.sepia !== "boolean"))) return false;
+  return true;
+}
+
+export function appliedTransformationLabels(applied: ImageTransformations | undefined): string[] {
+  if (!applied) return [];
+  const labels: string[] = [];
+  if (applied.crop) labels.push(`Crop ${applied.crop.width} × ${applied.crop.height} at (${applied.crop.x ?? 0}, ${applied.crop.y ?? 0})`);
+  if (applied.resize) {
+    const { width, height } = applied.resize;
+    labels.push(width !== undefined && height !== undefined ? `Resize ${width} × ${height}` : `Resize ${width !== undefined ? `width ${width}` : `height ${height}`} px`);
+  }
+  if (applied.flip) labels.push("Flip vertically");
+  if (applied.mirror) labels.push("Mirror horizontally");
+  if (applied.rotate) labels.push(`Rotate ${applied.rotate}°`);
+  if (applied.filters?.grayscale) labels.push("Grayscale");
+  if (applied.filters?.sepia) labels.push("Sepia");
+  return labels;
 }
 
 export function formatFileSize(bytes: number): string {

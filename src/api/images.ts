@@ -1,6 +1,6 @@
 import { apiClient } from "./client";
 import type { ImageMetadata, TransformImageRequest } from "./images.types";
-import { ImageInputError, isImageFormat, validateImageFile } from "../utils/images";
+import { ImageInputError, isImageFormat, isImageTransformations, validateImageFile } from "../utils/images";
 
 function readImageResponse(data: unknown, expectedKind: ImageMetadata["kind"]): ImageMetadata {
   if (!data || typeof data !== "object") throw invalidResponse();
@@ -19,6 +19,7 @@ function readImageResponse(data: unknown, expectedKind: ImageMetadata["kind"]): 
   for (const field of ["url", "downloadUrl", "urlExpiresAt"] as const) {
     if (record[field] !== undefined && typeof record[field] !== "string") throw invalidResponse();
   }
+  if (record.transformations !== undefined && !isImageTransformations(record.transformations)) throw invalidResponse();
   return record as unknown as ImageMetadata;
 }
 

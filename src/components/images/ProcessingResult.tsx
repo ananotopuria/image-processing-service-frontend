@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Download, ExternalLink, RefreshCw } from "lucide-react";
 import type { ImageMetadata } from "../../api/images.types";
-import { calculateSizeReduction, formatFileSize, usableImageUrl } from "../../utils/images";
+import { appliedTransformationLabels, calculateSizeReduction, formatFileSize, usableImageUrl } from "../../utils/images";
 
 interface ProcessingResultProps {
   image: ImageMetadata;
@@ -18,6 +18,7 @@ export default function ProcessingResult({ image, refreshing, onRefresh, onReset
   const url = usableImageUrl(image.url);
   const downloadUrl = usableImageUrl(image.downloadUrl);
   const reduction = calculateSizeReduction(image.originalSize, image.processedSize);
+  const appliedLabels = appliedTransformationLabels(image.transformations);
 
   useEffect(() => { heading.current?.focus(); }, []);
   useEffect(() => {
@@ -42,11 +43,18 @@ export default function ProcessingResult({ image, refreshing, onRefresh, onReset
             {[
               ["FORMAT", image.format.toUpperCase()],
               ["DIMENSIONS", image.width && image.height ? `${image.width} × ${image.height} px` : "Unavailable"],
+              ...(image.quality === undefined ? [] : [["QUALITY", String(image.quality)]]),
               ["ORIGINAL", formatFileSize(image.originalSize)],
               ["PROCESSED", image.processedSize === undefined ? "Unavailable" : formatFileSize(image.processedSize)],
               ...(reduction === null ? [] : [[reduction < 0 ? "SIZE INCREASE" : "SIZE SAVED", `${Math.abs(reduction).toFixed(1)}%`]]),
             ].map(([label, value]) => <div key={label}><dt className="font-mono text-[10px] text-muted-ink">{label}</dt><dd className="mt-2">{value}</dd></div>)}
           </dl>
+          {appliedLabels.length > 0 && <div className="mt-5">
+            <h3 className="font-mono text-[10px] text-muted-ink">APPLIED TRANSFORMATIONS</h3>
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {appliedLabels.map((label) => <li key={label} className="rounded-sm border border-specimen-line bg-specimen-paper px-3 py-2 text-xs">{label}</li>)}
+            </ul>
+          </div>}
           <div className="mt-6 flex flex-wrap gap-4">
             {downloadUrl && !expired && <a href={downloadUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-12 items-center gap-3 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover"><Download size={16} aria-hidden="true" /> Download image<span className="sr-only"> (opens in a new tab)</span></a>}
             {url && !expired && <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-12 items-center gap-2 text-sm underline">View image <ExternalLink size={15} aria-hidden="true" /><span className="sr-only"> (opens in a new tab)</span></a>}

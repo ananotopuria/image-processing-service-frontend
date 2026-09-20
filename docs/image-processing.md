@@ -33,7 +33,8 @@ to the multipart upload endpoint:
    ```
 
    Empty dimensions are omitted, including the entire `resize` object when both
-   are empty. Quality and format are always explicitly sent from the controls.
+   are empty. Quality and format are sent only when **Customize output** is on
+   (initially on at quality 80 / WebP, preserving the original workspace behavior).
    JSON values are numbers, never multipart strings. A new transformed version
    is saved and returned (201); the original is preserved.
 
@@ -46,6 +47,12 @@ to the multipart upload endpoint:
 | `transformations.resize` | Optional; if provided, at least width or height must be present |
 | `resize.width` | Optional integer, 1–4000 inclusive |
 | `resize.height` | Optional integer, 1–4000 inclusive |
+| `transformations.crop` | Optional; when enabled, width and height are required integers, 1–4000 inclusive |
+| `crop.x`, `crop.y` | Optional nonnegative safe integers, 0–9,007,199,254,740,991; each defaults to 0 |
+| `transformations.rotate` | Optional finite JSON number, −360 to 360 inclusive; fractional degrees allowed |
+| `transformations.flip` | Optional boolean; vertical flip |
+| `transformations.mirror` | Optional boolean; horizontal mirror |
+| `transformations.filters` | Optional nonempty object; accepts independent boolean `grayscale` and `sepia` fields |
 | `transformations.quality` | Optional integer, 1–100 inclusive; defaults to 80 |
 | `transformations.format` | Optional: exactly `jpeg`, `png`, or `webp`; defaults to `webp` |
 
@@ -54,8 +61,71 @@ can crop the edges. No dimensions means no resize. PNG quality affects palette
 quantization, and no encoding guarantees a smaller file. The backend does not
 auto-apply EXIF orientation and processes only the first animation frame.
 
-The backend also accepts crop, rotate, flip, mirror, and filters in its transform
-DTO. This page intentionally implements only the requested resize/encoding controls.
+## Transformation editor
+
+The existing editor exposes every supported transformation in five collapsible
+sections with visible activity summaries. Resize and Output start expanded. On
+desktop the original preview stays alongside the controls; on smaller screens
+the sections stack. The preview remains the **original image** until the backend
+returns a processed result. No local Sharp processing or simulated result is used.
+
+- **Resize:** optional width/height inputs. A single dimension is supported; an
+  empty pair omits `resize`, with no invented dimensions or implicit resize.
+- **Crop:** Enable crop reveals required width/height and optional X/Y offsets.
+  **Coordinates refer to the original image**, before resizing or rotation.
+  Changing resize settings never adjusts the crop. Blank offsets are omitted
+  so the backend defaults each to zero; explicit zero offsets are preserved.
+  Disabling crop retains the input values for editing but omits the whole operation.
+- **Orientation:** numeric rotation with fractional/negative angles and 90°,
+  180°, 270° quick actions. Clicking an active quick action or Clear removes
+  rotation. Empty and zero angles are omitted. Flip vertically and Mirror
+  horizontally are independent toggles; inactive flags are omitted.
+- **Filters:** independent grayscale/sepia toggles. When both are off, the entire
+  filters object is omitted. When both are on, the backend applies grayscale first.
+- **Output:** quality slider (1–100) with a visible number, plus WebP/JPEG/PNG
+  selection. Customize output is initially on. Turning it off omits both fields
+  and delegates to backend defaults (WebP, quality 80), without changing the other
+  operations. Values remain available when custom output is enabled again.
+
+The existing `buildTransformRequest()` is the single payload builder. It converts
+active numeric inputs to JSON numbers and validates their limits. Inactive crop,
+flip, mirror, filters, output, and zero/empty rotation are omitted; it never emits
+nulls or empty nested objects. An entirely inactive recipe is rejected locally
+because the backend requires a nonempty `transformations` object. With custom
+output off and only rotation/grayscale active, the exact request is:
+
+```json
+{"transformations":{"rotate":90,"filters":{"grayscale":true}}}
+```
+
+A full request exercising all supported operations is:
+
+```json
+{
+  "transformations": {
+    "crop": { "width": 1000, "height": 800, "x": 100, "y": 50 },
+    "resize": { "width": 800, "height": 600 },
+    "flip": true,
+    "mirror": true,
+    "rotate": 90,
+    "quality": 80,
+    "format": "webp",
+    "filters": { "grayscale": true, "sepia": true }
+  }
+}
+```
+
+That crop requires an original at least 1100 × 850 pixels. The fixed backend order
+is **crop → resize → flip/mirror → rotate → grayscale → sepia → encode**. Object
+property order does not change it. Positive angles rotate clockwise; arbitrary
+angles expand the canvas with transparent padding (black in JPEG).
+
+**Reset transformations** restores the initial settings and clears editor errors
+while retaining the selected file, local preview, and any confirmed uploaded
+original. It does not delete saved images or touch authentication. **Process
+another image** still resets the whole workspace. All editing/reset controls are
+disabled during processing. Invalid numeric fields are revealed/focused even
+inside collapsed sections, and request validation still runs before uploading.
 
 ## Exact successful response
 
@@ -97,25 +167,36 @@ output `filename`, `mimeType`, `format`, and a `path` of
   processedSize: number;  // bytes
   transformations: {
     resize?: { width?: number; height?: number };
+    crop?: { width: number; height: number; x: number; y: number };
+    rotate?: number;
+    flip?: boolean;
+    mirror?: boolean;
+    filters?: { grayscale?: boolean; sepia?: boolean };
     quality: number;
     format: "jpeg" | "png" | "webp";
   };
 }
 ```
 
-For this page's requests, `transformations` contains only the submitted resize
-and encoding settings shown above. The backend includes other operations when
-requested by other clients. `originalKey`, `originalName`, and `originalSize`
+`transformations` contains the applied operations, with resolved quality/format
+and crop offset defaults. `originalKey`, `originalName`, and `originalSize`
 refer to the preserved original. Originals omit `originalImageId`, dimensions,
 quality, processedSize, and transformations.
 
 The frontend validates response IDs, kind, file metadata, sizes, and processed
 dimensions before accepting success. It consumes `_id`, `originalImageId`,
 `kind`, `originalName`, `filename`, `path`, `format`, `originalSize`, `width`,
-`height`, `quality`, `processedSize`, and the three access-link fields. Unused
+`height`, `quality`, `processedSize`, `transformations`, and the three access-link fields. Unused
 owner/storage metadata is not displayed. Missing access links degrade to metadata
 and a refresh action; malformed required metadata produces an error rather than
 invented values.
+
+Applied transformation metadata is checked against the DTO before use. The result
+shows actual output dimensions, format, quality, and badges for the returned crop,
+resize, orientation, and filters. It never echoes unsaved editor settings as an
+applied result. False flags and zero rotation receive no active badge. Historical
+records without `transformations` retain the metadata/result view without
+inventing an operation history.
 
 ## Preview and download
 
@@ -150,7 +231,13 @@ endpoint is called.
 | 502 | S3 read/write or access-link signing failure |
 
 The UI maps errors to fixed useful messages without rendering arbitrary backend
-details. Development diagnostics log only status and error code. Network/CORS
+details. The one recognized crop-bounds message is parsed with an anchored numeric
+pattern and rewritten to explain the original dimensions and X/Y offsets. Other
+400s use a generic validation message. Crop size and offset ranges are checked
+locally, but the backend checks that the rectangle fits the original. Browser
+preview dimensions can reflect EXIF orientation, whereas backend coordinates do
+not, so the frontend does not use preview dimensions as authoritative crop bounds.
+Development diagnostics log only status and error code. Network/CORS
 errors cannot reliably be distinguished in the browser. The backend now configures
 CORS from `CORS_ORIGINS` and permits Content-Type/Authorization; deployment must
 include the actual frontend origin.
@@ -189,3 +276,7 @@ object URL cleanup, multipart fields, nested JSON construction, response validat
 headers/401 handling, cancellation, signed-link refresh, safe errors, metadata,
 missing/expired links, and honest size comparisons. Browser layout, drag/drop,
 file-picker interaction, and live backend/S3 access still require a browser check.
+The expanded suite keeps every original assertion and additionally covers each
+operation alone, the full combined recipe, inactive/empty omission, crop and
+rotation boundaries, independent/reset defaults, optional output, unchanged crop
+coordinates after resizing, safe crop errors, and backend-sourced applied metadata.

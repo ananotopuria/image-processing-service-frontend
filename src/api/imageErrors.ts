@@ -14,8 +14,15 @@ export function getImageErrorMessage(error: unknown): string {
       : "Could not reach the image service. Check your connection. A network or CORS issue may prevent access; an interrupted request may still have saved your image.";
   }
   const status = error.response.status;
+  const data: unknown = error.response.data;
+  const message = data && typeof data === "object" && "message" in data ? data.message : undefined;
+  // Only this exact backend-authored crop error may supply dimensions to the UI.
+  const cropBounds = status === 400 && typeof message === "string"
+    ? /^Crop rectangle must fit within the original image \((\d{1,9}) x (\d{1,9}) pixels\)$/.exec(message)
+    : null;
+  if (cropBounds) return `The crop must fit within the original image (${cropBounds[1]} × ${cropBounds[2]} pixels). Reduce the crop size or its X/Y offsets; resize settings do not change these bounds.`;
   const messages: Record<number, string> = {
-    400: "Check your image and settings. Use JPEG, PNG, or WebP, dimensions from 1–4000, and quality from 1–100.",
+    400: "Check your image and settings. Use dimensions from 1–4000, rotation from −360 to 360°, and quality from 1–100. A crop must fit inside the original image.",
     401: "Your session has expired. Please sign in again.",
     404: "This image is no longer available to your account. Choose the original file again.",
     409: "The saved original is unavailable. Choose the original file again.",
