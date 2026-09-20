@@ -213,8 +213,114 @@ inventing an operation history.
 Preview and download are supported by the verified backend contract. Live S3
 access has not been verified: signing itself does not check object existence or
 permissions. Failed previews show a fallback; expired links are hidden until
-refreshed. Only absolute credential-free HTTPS links are used. No history/list
-endpoint is called.
+refreshed. Only absolute credential-free HTTPS links are used. The studio does
+not fetch history; the gallery and dashboard use the list endpoint below.
+
+## Image history and recent images
+
+`GET /api/images?page=1&limit=10` uses the same authenticated Axios client and
+returns a pagination envelope:
+
+```ts
+{
+  items: ImageMetadata[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+```
+
+Defaults are page 1 and limit 10; page must be an integer from 1–100000, and limit
+from 1–50. The backend sorts by creation time descending, with ID as a tie-breaker.
+Counts include individual original, transformed, and legacy **records**, not
+logical groups. Counts and records are queried separately, so concurrent writes
+can briefly make them inconsistent. The frontend validates the envelope, IDs,
+metadata, and pagination without assuming every group fits on a page.
+
+`/images` fetches one server page at a time. Previous/Next use the returned page,
+limit, and totalPages, never an in-memory copy of the entire archive. Manual
+Refresh and Retry fetch that page again. There is no polling. Initial loading
+uses skeleton cards; subsequent requests preserve the last loaded page with an
+updating message. A failed refresh marks that page as potentially stale and
+disables deletion until it is reloaded. Aborted/stale responses cannot replace
+the current page. Empty collections show an Upload image link.
+
+`groupImagesByOriginal()` creates groups without mutating API data:
+
+- Originals are identified by `kind: "original"` and `_id`.
+- Versions with `kind: "transformed"` join by `originalImageId`, even if they
+  precede their original in the newest-first response.
+- A group's position follows its newest visible record. Versions preserve the
+  API's order. Same filenames never establish a relationship.
+- If an original is not on the current page, its visible versions still form a
+  labeled group. The frontend does not fetch an extra original for each group.
+- A transformed record without an original reference is displayed independently.
+  Legacy records with no `kind` are labeled Legacy image and are not assigned
+  invented original/version relationships.
+
+Original cards emphasize the original and offer **View versions (N) on this
+page**. Groups lacking their original emphasize the first visible version and
+can expand the rest. Native disclosure controls support keyboard expansion.
+Per-record details show available sizes, dimensions, quality, creation time,
+expiry, and actual applied transformations. Missing original dimensions or
+historical transformation metadata are not fabricated. Raw S3 keys are never
+displayed as user-facing file information.
+
+The dashboard now calls the same list API with `page=1&limit=4` and uses compact
+previews of the latest four records, with a View all images link. This is explicitly
+a recent-record view, not four distinct originals. It has its own honest loading,
+empty, and retry states and does not duplicate the full gallery.
+
+### Temporary gallery access links
+
+`GET /api/images/{id}` returns a single owned record with fresh `url`,
+`downloadUrl`, and `urlExpiresAt`. It supports originals, versions, and legacy
+records. `getImageById` and the studio's existing `refreshImageLinks` name refer
+to the same API implementation.
+
+Gallery previews use only the response's HTTPS `url`. Failed/missing/expired
+previews fall back independently, with a Refresh preview action. Links are
+considered stale 30 seconds before expiry; missing/invalid expiry is treated
+conservatively. A one-shot timer updates that local state but never makes a
+background request. Refresh is on demand, with duplicate requests disabled and
+abort cleanup when the card leaves the page. No URLs are persisted to storage.
+
+Download uses `downloadUrl`. Before starting, it checks expiry again using the
+current time and refreshes the record if necessary. It then follows the returned
+URL directly; S3's signed attachment disposition initiates the download. No API
+Bearer token is sent to S3, and no public bucket URL is constructed. Same-tab
+attachment navigation avoids popup blockers after an asynchronous URL refresh.
+AWS permissions or missing objects can still cause a signed link to fail; signing
+does not verify object existence. Browser/S3 behavior requires live verification.
+
+### Deleting records
+
+`DELETE /api/images/{id}` returns HTTP 200 with:
+
+```json
+{ "message": "Image deleted successfully" }
+```
+
+The backend deletes a version alone, preserving its original and siblings.
+Deleting an original cascades to **all owned versions**, including those outside
+the visible page. Legacy deletion affects only that legacy record. The frontend
+sends one DELETE for the chosen ID; the backend owns cascade behavior.
+
+A native modal dialog supplies keyboard focus containment and a clear per-kind
+warning. Cancel is initially focused; Escape cancels before submission. While
+pending, duplicate confirmation and dismissal are disabled and the gallery stays
+visible. On confirmed success, the dialog closes and the current server page is
+refetched. Empty pages above page 1 move to the previous valid page using the
+returned totalPages (which also handles multi-page cascade deletions).
+
+No record is optimistically removed before server confirmation. A failure keeps
+the dialog and offers Cancel, retry, and Refresh gallery. Errors use the existing
+normalizer with read/delete wording. Protected 401s still invoke global logout;
+404, 429, server/storage, and network errors remain safe user-facing messages.
+Deletion is not atomic across MongoDB/S3: a cascade can partially complete, and a
+lost response may hide a completed deletion. Refreshing before retrying is advised
+by the UI. There is no undo or backend idempotency mechanism.
 
 ## Errors and lifecycle
 
@@ -280,3 +386,11 @@ The expanded suite keeps every original assertion and additionally covers each
 operation alone, the full combined recipe, inactive/empty omission, crop and
 rotation boundaries, independent/reset defaults, optional output, unchanged crop
 coordinates after resizing, safe crop errors, and backend-sourced applied metadata.
+History coverage adds pagination/query contracts, originals/versions/legacy
+grouping, page-level orphan versions, immutable ordering, missing/expired URLs,
+single-record refresh, confirmation semantics, deletion response failures,
+server page correction, safe read/delete errors, and existing 401/cancellation
+behavior. Dashboard auth assertions still verify the greeting and navigation;
+their old placeholder assertions now require the real initial loading state.
+Server-rendered dialog/gallery tests do not verify browser focus, downloads, or
+live S3 access.

@@ -1,6 +1,7 @@
 import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
+import RecentImages from "../components/images/RecentImages";
 
 function Dashboard() {
   const { user } = useAuth();
@@ -32,12 +33,7 @@ function Dashboard() {
         <h2 id="recent-images-title" className="mt-3 font-editorial text-[30px] sm:text-[36px]">
           Recent images
         </h2>
-        <div className="mt-6 border border-dashed border-specimen-line bg-specimen-paper px-6 py-10 sm:px-10">
-          <p className="font-mono text-[11px] text-muted-ink">RESERVED FOR RECENT IMAGES</p>
-          <p className="mt-3 max-w-lg text-sm leading-[1.8] text-muted-ink">
-            This area will display recent images when the image archive is connected. Image data is not loaded yet.
-          </p>
-        </div>
+        <RecentImages />
       </section>
     </section>
   );

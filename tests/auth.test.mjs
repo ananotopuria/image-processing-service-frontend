@@ -257,7 +257,9 @@ test("dashboard greets the returned account and falls back to verified email aft
     assert.ok(markup.includes(greeting));
     assert.match(markup, /href="\/upload"/);
     assert.match(markup, /href="\/images"/);
-    assert.match(markup, /RESERVED FOR RECENT IMAGES/);
-    assert.match(markup, /Image data is not loaded yet/);
+    // Fetching starts after mount: retain the identity checks and require an honest loading state.
+    assert.match(markup, /Loading images/);
+    assert.match(markup, /View all images/);
+    assert.doesNotMatch(markup, /No images yet|RESERVED FOR RECENT IMAGES/);
   }
 });

@@ -1,19 +1,30 @@
 import axios from "axios";
 import { ImageInputError } from "../utils/images";
 
-export function getImageErrorMessage(error: unknown): string {
+export function getImageErrorMessage(error: unknown, operation: "process" | "load" | "delete" = "process"): string {
   if (error instanceof ImageInputError) return error.message;
-  if (!axios.isAxiosError(error)) return "We could not process this image. Please try again.";
+  if (!axios.isAxiosError(error)) return operation === "process" ? "We could not process this image. Please try again." : "We could not complete this image request. Please try again.";
   if (import.meta.env.DEV) {
     // Never log request headers, tokens, file bytes, or signed S3 URLs.
     console.debug("Image request failed", { status: error.response?.status, code: error.code });
   }
   if (!error.response) {
+    if (operation !== "process") return operation === "delete"
+      ? "Deletion could not be confirmed. Check your connection and refresh the gallery before retrying; the image may already have been deleted."
+      : "Could not load images. Check your connection and try again. A network or CORS issue may prevent access.";
     return error.code === "ECONNABORTED" || error.code === "ETIMEDOUT"
       ? "Processing took too long to respond. Your image may have been saved; retrying can create another version."
       : "Could not reach the image service. Check your connection. A network or CORS issue may prevent access; an interrupted request may still have saved your image.";
   }
   const status = error.response.status;
+  if (operation !== "process") {
+    if (status === 404) return "This image is no longer available. Refresh the gallery to see the latest records.";
+    if (status === 400) return "The image request was not accepted. Refresh the gallery and try again.";
+    if (status === 429) return "Too many image requests. Wait a minute before trying again.";
+    if (status >= 500) return operation === "delete"
+      ? "Deletion could not finish. Some files may have been removed. Refresh the gallery before retrying."
+      : "Image history or storage is unavailable right now. Please try again later.";
+  }
   const data: unknown = error.response.data;
   const message = data && typeof data === "object" && "message" in data ? data.message : undefined;
   // Only this exact backend-authored crop error may supply dimensions to the UI.

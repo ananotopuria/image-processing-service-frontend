@@ -1,13 +1,15 @@
 import { apiClient } from "./client";
-import type { ImageMetadata, TransformImageRequest } from "./images.types";
+import type { ImageMetadata, PaginatedImagesResponse, TransformImageRequest } from "./images.types";
 import { ImageInputError, isImageFormat, isImageTransformations, validateImageFile } from "../utils/images";
 
-function readImageResponse(data: unknown, expectedKind: ImageMetadata["kind"]): ImageMetadata {
+function readImageResponse(data: unknown, expectedKind?: ImageMetadata["kind"]): ImageMetadata {
   if (!data || typeof data !== "object") throw invalidResponse();
   const record = data as Record<string, unknown>;
   const positiveInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
   if (
-    typeof record._id !== "string" || !/^[a-f\d]{24}$/i.test(record._id) || record.kind !== expectedKind ||
+    typeof record._id !== "string" || !/^[a-f\d]{24}$/i.test(record._id) ||
+    (expectedKind !== undefined && record.kind !== expectedKind) ||
+    (record.kind !== undefined && record.kind !== "original" && record.kind !== "transformed") ||
     typeof record.originalName !== "string" || typeof record.filename !== "string" || typeof record.path !== "string" ||
     !isImageFormat(record.format) || !positiveInteger(record.originalSize)
   ) throw invalidResponse();
@@ -16,9 +18,14 @@ function readImageResponse(data: unknown, expectedKind: ImageMetadata["kind"]): 
     !positiveInteger(record.width) || !positiveInteger(record.height) || !positiveInteger(record.processedSize) ||
     !positiveInteger(record.quality) || record.quality > 100
   )) throw invalidResponse();
-  for (const field of ["url", "downloadUrl", "urlExpiresAt"] as const) {
+  for (const field of ["url", "downloadUrl", "urlExpiresAt", "createdAt", "updatedAt"] as const) {
     if (record[field] !== undefined && typeof record[field] !== "string") throw invalidResponse();
   }
+  for (const field of ["width", "height", "quality", "processedSize"] as const) {
+    if (record[field] !== undefined && !positiveInteger(record[field])) throw invalidResponse();
+  }
+  if (record.quality !== undefined && Number(record.quality) > 100) throw invalidResponse();
+  if (record.originalImageId !== undefined && (typeof record.originalImageId !== "string" || !/^[a-f\d]{24}$/i.test(record.originalImageId))) throw invalidResponse();
   if (record.transformations !== undefined && !isImageTransformations(record.transformations)) throw invalidResponse();
   return record as unknown as ImageMetadata;
 }
@@ -48,9 +55,42 @@ export async function transformImage(originalId: string, body: TransformImageReq
   return image;
 }
 
-export async function refreshImageLinks(imageId: string, signal: AbortSignal): Promise<ImageMetadata> {
+export async function getImageById(imageId: string, signal: AbortSignal): Promise<ImageMetadata> {
   const { data } = await apiClient.get<unknown>(`/api/images/${encodeURIComponent(imageId)}`, { signal });
-  const image = readImageResponse(data, "transformed");
+  const image = readImageResponse(data);
   if (image._id !== imageId) throw invalidResponse();
   return image;
+}
+
+// Preserve the studio's existing helper; all records share the same refresh endpoint.
+export { getImageById as refreshImageLinks };
+
+export async function getImages(page = 1, limit = 10, signal?: AbortSignal): Promise<PaginatedImagesResponse> {
+  if (!Number.isInteger(page) || page < 1 || page > 100000 || !Number.isInteger(limit) || limit < 1 || limit > 50) {
+    throw new ImageInputError("Choose a valid image page and a page size from 1 to 50.");
+  }
+  const { data } = await apiClient.get<unknown>("/api/images", { params: { page, limit }, signal });
+  if (!data || typeof data !== "object") throw invalidHistoryResponse();
+  const result = data as Record<string, unknown>;
+  if (
+    !Array.isArray(result.items) || result.items.length > limit || result.page !== page || result.limit !== limit ||
+    typeof result.total !== "number" || !Number.isSafeInteger(result.total) || result.total < 0 ||
+    result.totalPages !== Math.ceil(result.total / limit)
+  ) throw invalidHistoryResponse();
+  let items: ImageMetadata[];
+  try { items = result.items.map((item) => readImageResponse(item)); }
+  catch { throw invalidHistoryResponse(); }
+  if (new Set(items.map((item) => item._id)).size !== items.length) throw invalidHistoryResponse();
+  return { items, page, limit, total: result.total, totalPages: Math.ceil(result.total / limit) };
+}
+
+function invalidHistoryResponse() {
+  return new ImageInputError("The server returned incomplete image history. Please refresh the gallery.");
+}
+
+export async function deleteImage(imageId: string, signal: AbortSignal): Promise<void> {
+  const { data } = await apiClient.delete<unknown>(`/api/images/${encodeURIComponent(imageId)}`, { signal });
+  if (!data || typeof data !== "object" || !("message" in data) || data.message !== "Image deleted successfully") {
+    throw new ImageInputError("Deletion could not be confirmed. Refresh the gallery before trying again.");
+  }
 }

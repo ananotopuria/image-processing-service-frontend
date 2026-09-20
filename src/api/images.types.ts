@@ -37,7 +37,8 @@ export interface TransformImageRequest {
 // Metadata consumed by this page, from ImageResponseDto (not a response envelope).
 export interface ImageMetadata {
   _id: string;
-  kind: "original" | "transformed";
+  // Legacy records predate original preservation and have no kind.
+  kind?: "original" | "transformed";
   originalImageId?: string;
   originalName: string;
   filename: string;
@@ -49,8 +50,18 @@ export interface ImageMetadata {
   quality?: number;
   processedSize?: number;
   transformations?: ImageTransformations;
+  createdAt?: string;
+  updatedAt?: string;
   // The backend supplies these; tolerate missing links so metadata remains usable.
   url?: string;
   downloadUrl?: string;
   urlExpiresAt?: string;
+}
+
+export interface PaginatedImagesResponse {
+  items: ImageMetadata[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 }

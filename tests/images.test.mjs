@@ -17,11 +17,14 @@ globalThis.window = {
 process.env.VITE_API_URL = "https://api.example.test";
 const vite = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "error" });
 const helpers = await vite.ssrLoadModule("/src/utils/images.ts");
-const { createUploadFormData, uploadImage, transformImage, refreshImageLinks } = await vite.ssrLoadModule("/src/api/images.ts");
+const { createUploadFormData, uploadImage, transformImage, refreshImageLinks, getImageById, getImages, deleteImage } = await vite.ssrLoadModule("/src/api/images.ts");
+const history = await vite.ssrLoadModule("/src/utils/imageHistory.ts");
 const { apiClient } = await vite.ssrLoadModule("/src/api/client.ts");
 const { tokenStorage } = await vite.ssrLoadModule("/src/auth/tokenStorage.ts");
 const { getImageErrorMessage } = await vite.ssrLoadModule("/src/api/imageErrors.ts");
 const { default: ProcessingResult } = await vite.ssrLoadModule("/src/components/images/ProcessingResult.tsx");
+const { default: ImageGroupCard } = await vite.ssrLoadModule("/src/components/images/ImageGroupCard.tsx");
+const { default: DeleteImageDialog } = await vite.ssrLoadModule("/src/components/images/DeleteImageDialog.tsx");
 
 after(async () => { await vite.close(); delete globalThis.window; });
 beforeEach(() => tokenStorage.clearToken());
@@ -363,4 +366,206 @@ test("recognizes only the exact safe backend crop-bounds error", () => {
   assert.match(getImageErrorMessage(error), /resize settings do not change/);
   error.response.data.message += " database password: secret";
   assert.doesNotMatch(getImageErrorMessage(error), /password|secret|1200/);
+});
+
+const legacy = { ...processed, _id: "66e83a109af861ce27c86a04", kind: undefined, originalImageId: undefined, transformations: undefined };
+const version2 = { ...processed, _id: "66e83a109af861ce27c86a05", format: "jpeg", quality: 90, transformations: { rotate: 90, filters: { grayscale: true }, format: "jpeg", quality: 90 } };
+const pageResponse = (items, page = 1, limit = 10, total = items.length) => ({ items, page, limit, total, totalPages: Math.ceil(total / limit) });
+
+test("history requests exact server pagination with the existing Bearer interceptor", async () => {
+  tokenStorage.setToken("history-test-token");
+  apiClient.defaults.adapter = async (config) => {
+    assert.equal(config.method, "get");
+    assert.equal(config.url, "/api/images");
+    assert.deepEqual(config.params, { page: 2, limit: 10 });
+    assert.equal(apiClient.getUri(config), "https://api.example.test/api/images?page=2&limit=10");
+    assert.equal(config.headers.get("Authorization"), "Bearer history-test-token");
+    return response(config, pageResponse([processed, original, legacy], 2, 10, 42), 200);
+  };
+  assert.deepEqual(await getImages(2, 10, signal()), pageResponse([processed, original, legacy], 2, 10, 42));
+});
+
+test("history defaults to page 1 and 10 records and accepts empty collections", async () => {
+  apiClient.defaults.adapter = async (config) => {
+    assert.deepEqual(config.params, { page: 1, limit: 10 });
+    return response(config, pageResponse([]), 200);
+  };
+  assert.deepEqual(await getImages(), { items: [], page: 1, limit: 10, total: 0, totalPages: 0 });
+  assert.deepEqual(history.groupImagesByOriginal([]), []);
+});
+
+test("history supports the dashboard's four records and backend maximum of 50", async () => {
+  for (const limit of [4, 50]) {
+    apiClient.defaults.adapter = async (config) => {
+      assert.deepEqual(config.params, { page: 1, limit });
+      return response(config, pageResponse([original], 1, limit));
+    };
+    assert.equal((await getImages(1, limit)).limit, limit);
+  }
+});
+
+test("rejects invalid pagination before transport", async () => {
+  apiClient.defaults.adapter = async () => assert.fail("Invalid pagination reached transport");
+  for (const [page, limit] of [[0, 10], [1.5, 10], [100001, 10], [1, 0], [1, 51], [1, 2.5], [NaN, 10]]) {
+    await assert.rejects(getImages(page, limit), /valid image page/);
+  }
+});
+
+test("validates pagination envelopes and records without trusting the example response", async () => {
+  for (const data of [
+    null, [], {}, { ...pageResponse([]), items: {} }, { ...pageResponse([]), total: -1 },
+    { ...pageResponse([]), total: 1.5 }, { ...pageResponse([]), totalPages: 1 },
+    { ...pageResponse([]), page: 2 }, { ...pageResponse([]), limit: 50 },
+    pageResponse([{ ...original, _id: "image-id" }]), pageResponse([original, original]),
+    pageResponse(Array.from({ length: 11 }, () => original)),
+  ]) {
+    apiClient.defaults.adapter = async (config) => response(config, data);
+    await assert.rejects(getImages(), /incomplete image history/);
+  }
+});
+
+test("does not reject records just because separately queried counts changed concurrently", async () => {
+  apiClient.defaults.adapter = async (config) => response(config, pageResponse([original], 1, 10, 0));
+  assert.equal((await getImages()).items.length, 1);
+});
+
+test("groups multiple versions with the original even when versions arrive first, without mutation", () => {
+  const records = [version2, processed, legacy, original];
+  const snapshot = structuredClone(records);
+  const groups = history.groupImagesByOriginal(records);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].original, original);
+  assert.deepEqual(groups[0].versions, [version2, processed]);
+  assert.equal(groups[0].standalone, null);
+  assert.equal(groups[1].standalone, legacy);
+  assert.deepEqual(records, snapshot);
+});
+
+test("keeps page-level orphan versions visible and distinguishes unlinked/legacy records", () => {
+  const unlinked = { ...processed, _id: "66e83a109af861ce27c86a06", originalImageId: undefined };
+  const groups = history.groupImagesByOriginal([processed, version2, unlinked, legacy]);
+  assert.equal(groups.length, 3);
+  assert.equal(groups[0].original, null);
+  assert.deepEqual(groups[0].versions, [processed, version2]);
+  assert.equal(groups[1].standalone, unlinked);
+  assert.equal(groups[2].standalone, legacy);
+});
+
+test("groups by IDs, never by matching filenames, and preserves newest group's position", () => {
+  const secondOriginal = { ...original, _id: "66e83a109af861ce27c86a07" };
+  const groups = history.groupImagesByOriginal([processed, secondOriginal, original]);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].original._id, original._id);
+  assert.equal(groups[1].original._id, secondOriginal._id);
+});
+
+test("refresh uses the same endpoint/helper for originals, versions, and legacy images", async () => {
+  assert.equal(refreshImageLinks, getImageById);
+  for (const image of [original, processed, legacy]) {
+    apiClient.defaults.adapter = async (config) => {
+      assert.equal(config.method, "get");
+      assert.equal(config.url, `/api/images/${image._id}`);
+      return response(config, image, 200);
+    };
+    assert.equal((await getImageById(image._id, signal()))._id, image._id);
+  }
+  apiClient.defaults.adapter = async (config) => response(config, original);
+  await assert.rejects(getImageById(processed._id, signal()), /incomplete image details/);
+});
+
+test("detects expired, near-expiry, missing, and invalid access timestamps", () => {
+  const now = Date.parse("2026-09-20T12:00:00Z");
+  assert.equal(history.isPresignedUrlExpired("2026-09-20T12:15:00Z", now), false);
+  assert.equal(history.isPresignedUrlExpired("2026-09-20T12:00:30Z", now), true);
+  assert.equal(history.isPresignedUrlExpired("2026-09-20T12:00:31Z", now), false);
+  assert.equal(history.isPresignedUrlExpired("2026-09-20T12:00:00Z", now, 0), true);
+  assert.equal(history.isPresignedUrlExpired("2026-09-20T12:00:01Z", now, 0), false);
+  for (const value of [undefined, "", "invalid", "2026-09-20T11:00:00Z"]) assert.equal(history.isPresignedUrlExpired(value, now), true);
+});
+
+test("corrects empty pages after a final deletion, cascade deletion, or concurrent changes", () => {
+  assert.equal(history.validHistoryPage(pageResponse([], 5, 10, 40)), 4);
+  assert.equal(history.validHistoryPage(pageResponse([], 5, 10, 3)), 1);
+  assert.equal(history.validHistoryPage(pageResponse([], 5, 10, 0)), 1);
+  assert.equal(history.validHistoryPage(pageResponse([], 1, 10, 0)), 1);
+  assert.equal(history.validHistoryPage(pageResponse([original], 2, 10, 11)), 2);
+  // An empty page with a stale count still steps backward, never loops on the same page.
+  assert.equal(history.validHistoryPage(pageResponse([], 5, 10, 60)), 4);
+});
+
+test("delete confirmations distinguish original cascade, individual version, and legacy image", () => {
+  assert.match(history.imageDeleteMessage(original), /all of its transformed versions, including versions on other pages/);
+  assert.match(history.imageDeleteMessage(processed), /original image and other versions will be kept/);
+  assert.match(history.imageDeleteMessage(legacy), /Only this saved image/);
+  const markup = renderToStaticMarkup(createElement(DeleteImageDialog, { image: original, pending: true, error: null, onCancel() {}, onConfirm() {}, onRefresh() {} }));
+  assert.match(markup, /<dialog/);
+  assert.match(markup, /aria-labelledby="delete-image-title"/);
+  assert.match(markup, /aria-describedby="delete-image-description"/);
+  assert.match(markup, /Deleting…/);
+  assert.equal((markup.match(/disabled=""/g) ?? []).length, 2);
+});
+
+test("deletes only the requested ID through the shared authenticated client", async () => {
+  tokenStorage.setToken("delete-test-token");
+  for (const image of [original, processed, legacy]) {
+    let calls = 0;
+    apiClient.defaults.adapter = async (config) => {
+      calls++;
+      assert.equal(config.method, "delete");
+      assert.equal(config.url, `/api/images/${image._id}`);
+      assert.equal(config.headers.get("Authorization"), "Bearer delete-test-token");
+      assert.equal(config.data, undefined);
+      return response(config, { message: "Image deleted successfully" }, 200);
+    };
+    await deleteImage(image._id, signal());
+    assert.equal(calls, 1); // Cascade belongs to the backend, not client-side loops.
+  }
+});
+
+test("does not confirm deletion on malformed responses or failed transport", async () => {
+  for (const data of [undefined, {}, { message: "unknown" }]) {
+    apiClient.defaults.adapter = async (config) => response(config, data, 200);
+    await assert.rejects(deleteImage(processed._id, signal()), /Deletion could not be confirmed/);
+  }
+  for (const status of [404, 429, 500, 502]) {
+    apiClient.defaults.adapter = async (config) => { throw httpError(status, config); };
+    await assert.rejects(deleteImage(processed._id, signal()));
+  }
+});
+
+test("list, detail, and delete preserve the global 401 behavior and cancellation", async () => {
+  for (const send of [() => getImages(1, 10, signal()), () => getImageById(original._id, signal()), () => deleteImage(processed._id, signal())]) {
+    tokenStorage.setToken("expired-history-token");
+    apiClient.defaults.adapter = async (config) => { throw httpError(401, config); };
+    await assert.rejects(send());
+    assert.equal(tokenStorage.getToken(), null);
+  }
+  const controller = new AbortController();
+  controller.abort();
+  apiClient.defaults.adapter = async () => assert.fail("Canceled history transport ran");
+  await assert.rejects(getImages(1, 10, controller.signal));
+  await assert.rejects(deleteImage(original._id, controller.signal));
+});
+
+test("gallery renders actual labels, groups and details without exposing S3 keys", () => {
+  const group = history.groupImagesByOriginal([version2, processed, original])[0];
+  const markup = renderToStaticMarkup(createElement(ImageGroupCard, { group, deleteDisabled: false, onDelete() {} }));
+  for (const text of ["Original", "Processed version", "View versions", "(2)", "on this page", "Image details", "Rotate 90°", "Grayscale", "Quality 90"]) assert.ok(markup.includes(text), text);
+  assert.doesNotMatch(markup, /originals\/user\/|transformed\/user\//);
+  const orphan = history.groupImagesByOriginal([{ ...processed, url: undefined, downloadUrl: undefined, urlExpiresAt: undefined }])[0];
+  const orphanMarkup = renderToStaticMarkup(createElement(ImageGroupCard, { group: orphan, deleteDisabled: false, onDelete() {} }));
+  assert.match(orphanMarkup, /original is not on this page/);
+  assert.match(orphanMarkup, /Refresh preview/);
+  assert.doesNotMatch(orphanMarkup, /<img/);
+});
+
+test("history error messages describe reads/deletes and never expose server internals", () => {
+  for (const operation of ["load", "delete"]) for (const status of [400, 401, 404, 429, 500, 502]) {
+    const message = getImageErrorMessage(httpError(status), operation);
+    assert.doesNotMatch(message, /password|secret|private transport/);
+    if (status === 401) assert.match(message, /sign in again/);
+  }
+  assert.match(getImageErrorMessage(httpError(502), "delete"), /Some files may have been removed/);
+  assert.match(getImageErrorMessage(new AxiosError("private", "ERR_NETWORK"), "delete"), /already have been deleted/);
+  assert.match(getImageErrorMessage(new AxiosError("private", "ERR_NETWORK"), "load"), /network or CORS/);
 });

@@ -119,7 +119,8 @@ For a live browser check with the configured backend:
 7. On Vercel, visit and refresh each protected route directly. Confirm legacy
    `/studio` and `/history` links lead to `/upload` and `/images` after verification.
 
-The dashboard reserves an area for recent images without claiming any image data
-has been loaded. `/images` remains a placeholder; no history fetching is implemented.
-`/upload` now implements the separate upload and transform flow documented in
+The dashboard loads four recent image records. `/images` provides authenticated,
+paginated history with grouped versions, temporary URL refresh, and confirmed
+deletion. `/upload` implements the separate upload and transform flow. These
+features share the same API client and are documented in
 [Image processing](image-processing.md).
