@@ -25,6 +25,7 @@ const vite = await createServer({
 const { tokenStorage } = await vite.ssrLoadModule("/src/auth/tokenStorage.ts");
 const restoredToken = tokenStorage.getToken();
 const { apiClient } = await vite.ssrLoadModule("/src/api/client.ts");
+const { API_TIMEOUT_MS, SLOW_REQUEST_DELAY_MS, createRequestActivity, requestActivity } = await vite.ssrLoadModule("/src/api/requestActivity.ts");
 const { signIn, signUp, getProfile } = await vite.ssrLoadModule("/src/api/auth.ts");
 const { resolveApiUrl } = await vite.ssrLoadModule("/src/api/config.ts");
 const { getAuthErrorMessage } = await vite.ssrLoadModule("/src/api/errors.ts");
@@ -193,6 +194,112 @@ test("network and server failures retain the saved token for retry", async () =>
   apiClient.defaults.adapter = async (config) => { throw httpError(503, {}, config); };
   await assert.rejects(getProfile(new AbortController().signal));
   assert.equal(tokenStorage.getToken(), "test-token");
+});
+
+test("slow first request stays pending through wake-up and succeeds without automatic retry", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let release, started, config;
+  let calls = 0;
+  let completed = false;
+  const entered = new Promise((resolve) => { started = resolve; });
+  apiClient.defaults.adapter = (next) => {
+    config = next; calls++; started();
+    return new Promise((resolve) => { release = resolve; });
+  };
+  const pending = signIn({ email: "demo@example.test", password: "test-only-password" }).then((result) => { completed = true; return result; });
+  await entered;
+  assert.equal(config.timeout, API_TIMEOUT_MS);
+  assert.equal(API_TIMEOUT_MS, 120000);
+  t.mock.timers.tick(SLOW_REQUEST_DELAY_MS - 1);
+  assert.equal(requestActivity.getSnapshot(), false);
+  t.mock.timers.tick(1);
+  assert.equal(requestActivity.getSnapshot(), true);
+  t.mock.timers.tick(60000);
+  assert.equal(completed, false);
+  assert.equal(calls, 1);
+  release(response(config, authResponse));
+  assert.deepEqual(await pending, authResponse);
+  assert.equal(requestActivity.getSnapshot(), false);
+  assert.equal(calls, 1);
+});
+
+test("slow timeout, network and server failures clear the notice and allow retry with the same values", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const values = { email: "demo@example.test", password: "test-only-password" };
+  for (const failure of ["ECONNABORTED", "ETIMEDOUT", "ERR_NETWORK", 503]) {
+    let rejectTransport, started, config;
+    let calls = 0;
+    const entered = new Promise((resolve) => { started = resolve; });
+    apiClient.defaults.adapter = (next) => {
+      config = next; calls++;
+      assert.deepEqual(JSON.parse(config.data), values);
+      started();
+      return new Promise((_, reject) => { rejectTransport = reject; });
+    };
+    const pending = signIn(values);
+    const rejected = assert.rejects(pending, (error) => {
+      const message = getAuthErrorMessage(error);
+      assert.doesNotMatch(message, /invalid email|password/i);
+      assert.match(message, failure === 503 ? /unavailable/ : failure === "ERR_NETWORK" ? /could not reach/ : /too long/);
+      return true;
+    });
+    await entered;
+    t.mock.timers.tick(SLOW_REQUEST_DELAY_MS);
+    assert.equal(requestActivity.getSnapshot(), true);
+    rejectTransport(failure === 503 ? httpError(503, {}, config) : new AxiosError("private transport detail", failure, config));
+    await rejected;
+    assert.equal(requestActivity.getSnapshot(), false);
+    t.mock.timers.tick(API_TIMEOUT_MS);
+    assert.equal(calls, 1);
+    apiClient.defaults.adapter = async (next) => {
+      calls++; assert.deepEqual(JSON.parse(next.data), values);
+      return response(next, authResponse);
+    };
+    assert.deepEqual(await signIn(values), authResponse);
+    assert.equal(calls, 2);
+    assert.equal(requestActivity.getSnapshot(), false);
+  }
+});
+
+test("fast success and non-Axios failures never leave a startup notice behind", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  apiClient.defaults.adapter = async (config) => response(config, authResponse);
+  await signIn({ email: "demo@example.test", password: "test-only-password" });
+  apiClient.defaults.adapter = async () => { throw new Error("adapter failure"); };
+  await assert.rejects(signIn({ email: "demo@example.test", password: "test-only-password" }));
+  t.mock.timers.tick(API_TIMEOUT_MS);
+  assert.equal(requestActivity.getSnapshot(), false);
+});
+
+test("request activity handles concurrency, cancellation, cleanup and fresh retries", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const activity = createRequestActivity();
+  const states = [];
+  const unsubscribe = activity.subscribe(() => states.push(activity.getSnapshot()));
+  const controller = new AbortController();
+  const first = activity.begin(controller.signal);
+  const second = activity.begin();
+  t.mock.timers.tick(SLOW_REQUEST_DELAY_MS);
+  assert.equal(activity.getSnapshot(), true);
+  controller.abort(); first();
+  assert.equal(activity.getSnapshot(), true);
+  second();
+  assert.equal(activity.getSnapshot(), false);
+  const canceled = activity.begin(); canceled();
+  const alreadyAborted = activity.begin(controller.signal);
+  t.mock.timers.tick(SLOW_REQUEST_DELAY_MS);
+  assert.equal(activity.getSnapshot(), false);
+  alreadyAborted();
+  const retry = activity.begin();
+  t.mock.timers.tick(SLOW_REQUEST_DELAY_MS - 1);
+  assert.equal(activity.getSnapshot(), false);
+  t.mock.timers.tick(1);
+  assert.equal(activity.getSnapshot(), true);
+  retry();
+  assert.equal(activity.getSnapshot(), false);
+  assert.ok(states.includes(true));
+  assert.equal(states.at(-1), false);
+  unsubscribe();
 });
 
 test("shows safe validation/conflict errors and conceals internal server details", () => {

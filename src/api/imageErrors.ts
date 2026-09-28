@@ -9,11 +9,13 @@ export function getImageErrorMessage(error: unknown, operation: "process" | "loa
     console.debug("Image request failed", { status: error.response?.status, code: error.code });
   }
   if (!error.response) {
+    const timedOut = error.code === "ECONNABORTED" || error.code === "ETIMEDOUT";
     if (operation !== "process") return operation === "delete"
       ? "Deletion could not be confirmed. Check your connection and refresh the gallery before retrying; the image may already have been deleted."
+      : timedOut ? "The image service took too long to respond. Please retry loading your images."
       : "Could not load images. Check your connection and try again. A network or CORS issue may prevent access.";
-    return error.code === "ECONNABORTED" || error.code === "ETIMEDOUT"
-      ? "Processing took too long to respond. Your image may have been saved; retrying can create another version."
+    return timedOut
+      ? "The image service took too long to respond. Your image may have been saved; retrying can create another version."
       : "Could not reach the image service. Check your connection. A network or CORS issue may prevent access; an interrupted request may still have saved your image.";
   }
   const status = error.response.status;

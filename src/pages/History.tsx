@@ -4,20 +4,20 @@ import { Link } from "react-router-dom";
 import { deleteImage } from "../api/images";
 import type { ImageMetadata } from "../api/images.types";
 import { getImageErrorMessage } from "../api/imageErrors";
-import { useImageHistory } from "../hooks/useImageHistory";
-import { groupImagesByOriginal } from "../utils/imageHistory";
+import { useGroupedImageHistory } from "../hooks/useGroupedImageHistory";
 import ImageGroupCard from "../components/images/ImageGroupCard";
 import DeleteImageDialog from "../components/images/DeleteImageDialog";
 import GalleryLoading from "../components/images/GalleryLoading";
+import ServiceStatus from "../components/ServiceStatus";
 
 function History() {
-  const { data, loading, error, setPage, refresh } = useImageHistory();
+  const { data, loading, error, setPage, refresh } = useGroupedImageHistory();
   const [selected, setSelected] = useState<ImageMetadata | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const deletion = useRef<AbortController | null>(null);
-  const groups = groupImagesByOriginal(data?.items ?? []);
+  const groups = data?.items ?? [];
 
   useEffect(() => () => deletion.current?.abort(), []);
 
@@ -52,10 +52,11 @@ function History() {
         <Link to="/upload" className="inline-flex min-h-12 shrink-0 items-center gap-5 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover">Upload image <ArrowRight size={17} aria-hidden="true" /></Link>
       </div>
       <div className="my-7 flex flex-wrap items-center justify-between gap-3 border-y border-archive-line py-3">
-        <p className="text-sm text-muted-ink">{data ? `${data.total} image ${data.total === 1 ? "record" : "records"} · originals, versions, and legacy images` : "Your saved originals and versions"}</p>
+        <p className="text-sm text-muted-ink">{data ? `${data.total} image ${data.total === 1 ? "group" : "groups"} · ${data.recordCount} saved ${data.recordCount === 1 ? "record" : "records"}` : "Your saved originals and versions"}</p>
         <button type="button" disabled={loading || deleting} onClick={() => { setNotice(""); refresh(); }} className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm underline disabled:cursor-wait disabled:opacity-50"><RefreshCw size={15} aria-hidden="true" className={loading ? "animate-spin motion-reduce:animate-none" : ""} />{loading ? "Refreshing…" : "Refresh"}</button>
       </div>
-      <div role="status" aria-atomic="true" className="mb-4 text-sm text-muted-ink">{notice}{loading && data ? " Updating this page of the archive…" : ""}</div>
+      <div role="status" aria-atomic="true" className="mb-4 text-sm text-muted-ink">{notice}{loading && data ? " Updating your image groups…" : ""}</div>
+      <ServiceStatus />
       {error && <div role="alert" className="mb-6 border-l-2 border-ink bg-specimen-paper p-5">
         <p className="text-sm leading-relaxed">{error}</p>
         {data && <p className="mt-2 text-xs text-muted-ink">Showing the last loaded page. It may no longer be current.</p>}
@@ -69,15 +70,18 @@ function History() {
         <Link to="/upload" className="mt-6 inline-flex min-h-12 items-center gap-4 rounded-sm bg-ink px-5 text-sm text-paper hover:bg-ink-hover">Upload image <ArrowRight size={16} aria-hidden="true" /></Link>
       </div>}
       {data && data.items.length > 0 && <>
-        <p className="mb-5 text-xs leading-relaxed text-muted-ink">Newest records first. Groups include only records on this page; an original and its versions may appear on different pages.</p>
+        <p className="mb-5 text-xs leading-relaxed text-muted-ink">One card per original, with all its versions together. Newest activity first. Legacy images and versions without an available original remain visible as separate groups.</p>
         <div aria-busy={loading} className="grid items-start gap-6 md:grid-cols-2">
           {groups.map((group) => <ImageGroupCard key={group.key} group={group} deleteDisabled={loading || deleting || Boolean(error)} onDelete={(image) => { setSelected(image); setDeleteError(null); setNotice(""); }} />)}
         </div>
       </>}
       {data && data.totalPages > 0 && <nav aria-label="Image history pages" className="mt-8 flex flex-wrap items-center justify-between gap-4 border-t border-archive-line pt-6">
-        <button type="button" disabled={loading || deleting || data.page <= 1} onClick={() => { setNotice(""); setPage(data.page - 1); }} className="min-h-11 cursor-pointer rounded-sm border border-specimen-line px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40">Previous</button>
-        <p className="text-sm" aria-current="page">Page {data.page} of {data.totalPages} <span className="block text-center text-xs text-muted-ink">{data.limit} records per page</span></p>
-        <button type="button" disabled={loading || deleting || data.page >= data.totalPages || data.page >= 100000} onClick={() => { setNotice(""); setPage(data.page + 1); }} className="min-h-11 cursor-pointer rounded-sm border border-specimen-line px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40">Next</button>
+        <button type="button" disabled={loading || deleting || Boolean(error) || data.page <= 1} onClick={() => { setNotice(""); setPage(data.page - 1); }} className="min-h-11 cursor-pointer rounded-sm border border-specimen-line px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40">Previous</button>
+        <p className="text-center text-sm" aria-current="page">Page {data.page} of {data.totalPages}
+          <span className="block text-xs leading-relaxed text-muted-ink">Showing {data.from}–{data.to} of {data.total} image groups</span>
+          <span className="block text-xs leading-relaxed text-muted-ink">Up to {data.limit} cards per page</span>
+        </p>
+        <button type="button" disabled={loading || deleting || Boolean(error) || data.page >= data.totalPages} onClick={() => { setNotice(""); setPage(data.page + 1); }} className="min-h-11 cursor-pointer rounded-sm border border-specimen-line px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40">Next</button>
       </nav>}
       {selected && <DeleteImageDialog image={selected} pending={deleting} error={deleteError} onCancel={() => { if (!deletion.current) setSelected(null); }} onConfirm={() => { void confirmDelete(); }} onRefresh={() => { setSelected(null); setNotice(""); refresh(); }} />}
     </section>

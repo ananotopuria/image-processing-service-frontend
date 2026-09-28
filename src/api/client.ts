@@ -1,10 +1,11 @@
 import axios from "axios";
 import { tokenStorage } from "../auth/tokenStorage";
 import { resolveApiUrl } from "./config";
+import { API_TIMEOUT_MS, requestActivity } from "./requestActivity";
 
 export const apiClient = axios.create({
   baseURL: resolveApiUrl(import.meta.env.VITE_API_URL),
-  timeout: 30000,
+  timeout: API_TIMEOUT_MS,
 });
 
 apiClient.interceptors.request.use((config) => {
@@ -20,6 +21,17 @@ apiClient.interceptors.request.use((config) => {
   if (token && !isAuthRequest) {
     config.headers.setAuthorization(`Bearer ${token}`);
   }
+  const adapter = axios.getAdapter(config.adapter ?? apiClient.defaults.adapter);
+  config.adapter = async (requestConfig) => {
+    const finish = requestActivity.begin(requestConfig.signal);
+    try {
+      return await adapter(requestConfig);
+    } finally {
+      // A notice never cancels or repeats a request. Clear it for every outcome,
+      // including adapter failures without an Axios error/config object.
+      finish();
+    }
+  };
   return config;
 });
 

@@ -7,7 +7,21 @@ export interface ImageGroup {
   standalone: ImageMetadata | null;
 }
 
-// Keep the API's newest-first order, anchored by each group's first visible record.
+export const IMAGE_GROUPS_PER_PAGE = 10;
+
+export function paginateImageGroups(groups: ImageGroup[], page = 1, limit = IMAGE_GROUPS_PER_PAGE) {
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(limit) || limit < 1) {
+    throw new RangeError("Choose a positive whole-number group page and page size.");
+  }
+  const total = groups.length;
+  const totalPages = Math.ceil(total / limit);
+  const currentPage = Math.min(page, Math.max(1, totalPages));
+  const start = (currentPage - 1) * limit;
+  return { items: groups.slice(start, start + limit), page: currentPage, limit, total, totalPages,
+    from: total ? start + 1 : 0, to: Math.min(start + limit, total) };
+}
+
+// Keep the API's newest-first order, anchored by each group's newest record.
 export function groupImagesByOriginal(items: ImageMetadata[]): ImageGroup[] {
   const groups = new Map<string, ImageGroup>();
   for (const image of items) {
@@ -41,7 +55,7 @@ export function imageKindLabel(image: ImageMetadata): string {
 }
 
 export function imageDeleteMessage(image: ImageMetadata): string {
-  if (image.kind === "original") return "Deleting this original will also delete all of its transformed versions, including versions on other pages. This cannot be undone.";
+  if (image.kind === "original") return "Deleting this original will also delete all of its transformed versions. This cannot be undone.";
   if (image.kind === "transformed") return "Delete this processed version? The original image and other versions will be kept. This cannot be undone.";
   return "Delete this legacy image? Only this saved image will be removed. This cannot be undone.";
 }

@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { getAuthErrorMessage } from "../../api/errors";
 import { useAuth } from "../../auth/useAuth";
 import AuthField from "./AuthField";
+import ServiceStatus from "../ServiceStatus";
 
 type FieldName = "username" | "email" | "password";
 type FieldErrors = Partial<Record<FieldName, string>>;
@@ -136,6 +137,7 @@ function AuthForm({ mode }: { mode: "login" | "register" }) {
       >
         {isSubmitting
           ? isRegister ? "CREATING ACCOUNT…" : "SIGNING IN…"
+          : notice ? isRegister ? "RETRY REGISTRATION" : "RETRY SIGN IN"
           : isRegister ? "CREATE ACCOUNT" : "SIGN IN"}
         <ArrowRight
           size={18}
@@ -143,6 +145,7 @@ function AuthForm({ mode }: { mode: "login" | "register" }) {
           className="transition-transform duration-200 group-hover:translate-x-1 motion-reduce:transform-none motion-reduce:transition-none"
         />
       </button>
+      <ServiceStatus />
 
       <div role="status" aria-atomic="true">
         <span className="sr-only">

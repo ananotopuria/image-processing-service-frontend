@@ -250,29 +250,43 @@ logical groups. Counts and records are queried separately, so concurrent writes
 can briefly make them inconsistent. The frontend validates the envelope, IDs,
 metadata, and pagination without assuming every group fits on a page.
 
-`/images` fetches one server page at a time. Previous/Next use the returned page,
-limit, and totalPages, never an in-memory copy of the entire archive. Manual
-Refresh and Retry fetch that page again. There is no polling. Initial loading
-uses skeleton cards; subsequent requests preserve the last loaded page with an
-updating message. A failed refresh marks that page as potentially stale and
-disables deletion until it is reloaded. Aborted/stale responses cannot replace
-the current page. Empty collections show an Upload image link.
+`/images` collects all archive metadata in API batches of 50, then groups records
+before paginating. Each UI page has up to **10 complete image groups/cards**;
+only the last page can have fewer. The footer's page count and visible range use
+group totals. The header distinguishes image groups from saved record counts.
+Previous/Next slice this complete collection locally, so API page boundaries
+cannot separate versions from their original. Groups follow newest activity.
+
+Manual Refresh, Retry, and deletion reload the archive. There is no polling.
+Initial loading uses skeleton cards; refresh preserves the last complete archive
+with an updating message. Failed refreshes mark it stale and disable navigation
+and deletion until reloaded. Failed later batches never publish partial groups;
+changed totals, duplicate IDs across batches, or incomplete batches require Retry.
+The API has no atomic snapshot, so simultaneous changes cannot be fully excluded.
+Aborted/stale responses cannot replace the collection. Deleting the last group on
+a page clamps navigation to the last remaining page. Empty archives show an
+Upload image link.
+
+This frontend-only fix fetches metadata for the whole archive, which suits the
+portfolio demo but increases initial load time and memory for large collections.
+A backend endpoint that paginates originals with complete versions would be the
+scalable replacement; the existing raw-record API and dashboard remain unchanged.
 
 `groupImagesByOriginal()` creates groups without mutating API data:
 
 - Originals are identified by `kind: "original"` and `_id`.
 - Versions with `kind: "transformed"` join by `originalImageId`, even if they
   precede their original in the newest-first response.
-- A group's position follows its newest visible record. Versions preserve the
+- A group's position follows its newest record. Versions preserve the
   API's order. Same filenames never establish a relationship.
-- If an original is not on the current page, its visible versions still form a
-  labeled group. The frontend does not fetch an extra original for each group.
+- If an original is unavailable in the complete archive, its linked versions
+  still form one labeled group. This is not caused by pagination.
 - A transformed record without an original reference is displayed independently.
   Legacy records with no `kind` are labeled Legacy image and are not assigned
   invented original/version relationships.
 
-Original cards emphasize the original and offer **View versions (N) on this
-page**. Groups lacking their original emphasize the first visible version and
+Original cards emphasize the original and offer **View versions (N)** for all
+its versions. Groups lacking their original emphasize the first version and
 can expand the rest. Native disclosure controls support keyboard expansion.
 Per-record details show available sizes, dimensions, quality, creation time,
 expiry, and actual applied transformations. Missing original dimensions or
@@ -315,8 +329,8 @@ does not verify object existence. Browser/S3 behavior requires live verification
 ```
 
 The backend deletes a version alone, preserving its original and siblings.
-Deleting an original cascades to **all owned versions**, including those outside
-the visible page. Legacy deletion affects only that legacy record. The frontend
+Deleting an original cascades to **all owned versions**, including versions in
+its collapsed disclosure. Legacy deletion affects only that legacy record. The frontend
 sends one DELETE for the chosen ID; the backend owns cascade behavior.
 
 A native modal dialog supplies keyboard focus containment and a clear per-kind
@@ -380,8 +394,12 @@ without deleting saved images or changing authentication.
 The two writes are not transactional or idempotent. A timeout, lost response, or
 signing failure can occur after storage succeeds. Messages explain that retries
 can create another copy/version. The frontend does not automatically retry writes.
-Transform calls allow up to 120 seconds; other requests keep the client's 30-second
-timeout. Signed URLs, request tokens, and image bytes are never logged by this page.
+All API calls allow up to 120 seconds for the free demo's backend startup. After
+eight seconds a pending request shows an informational startup notice, without
+canceling or retrying it. Failure leaves the selected image and transformation
+settings in place; the submit action offers Retry even if the initial upload
+failed. Confirmed uploaded originals are reused. Signed URLs, request tokens,
+and image bytes are never logged by this page.
 
 ## Verification
 
@@ -404,7 +422,9 @@ operation alone, the full combined recipe, inactive/empty omission, crop and
 rotation boundaries, independent/reset defaults, optional output, unchanged crop
 coordinates after resizing, safe crop errors, and backend-sourced applied metadata.
 History coverage adds pagination/query contracts, originals/versions/legacy
-grouping, page-level orphan versions, immutable ordering, missing/expired URLs,
+grouping, orphan versions, complete groups across API page boundaries, group page
+counts and ranges, deletion page clamping, interrupted/failed archive loads,
+immutable ordering, missing/expired URLs,
 single-record refresh, confirmation semantics, deletion response failures,
 server page correction, safe read/delete errors, and existing 401/cancellation
 behavior. Dashboard auth assertions still verify the greeting and navigation;

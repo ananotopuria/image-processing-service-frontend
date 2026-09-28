@@ -2,11 +2,13 @@ import { Link } from "react-router-dom";
 import { useImageHistory } from "../../hooks/useImageHistory";
 import GalleryLoading from "./GalleryLoading";
 import ImageHistoryItem from "./ImageHistoryItem";
+import ServiceStatus from "../ServiceStatus";
 
 export default function RecentImages() {
   const { data, loading, error, refresh } = useImageHistory(4);
   return (
     <div className="mt-6">
+      <ServiceStatus />
       {!data && loading && <GalleryLoading count={4} />}
       {error && <div role="alert" className="border-l-2 border-ink bg-specimen-paper p-5">
         <p className="text-sm leading-relaxed">{error}</p>

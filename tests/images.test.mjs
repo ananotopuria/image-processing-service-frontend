@@ -19,7 +19,7 @@ const vite = await createServer({ server: { middlewareMode: true, hmr: false, wa
 const helpers = await vite.ssrLoadModule("/src/utils/images.ts");
 const cropHelpers = await vite.ssrLoadModule("/src/utils/crop.ts");
 const { imagePreviewSource } = await vite.ssrLoadModule("/src/utils/imagePreviewSource.ts");
-const { createUploadFormData, uploadImage, transformImage, refreshImageLinks, getImageById, getImages, deleteImage } = await vite.ssrLoadModule("/src/api/images.ts");
+const { createUploadFormData, uploadImage, transformImage, refreshImageLinks, getImageById, getImages, getImageArchive, deleteImage } = await vite.ssrLoadModule("/src/api/images.ts");
 const history = await vite.ssrLoadModule("/src/utils/imageHistory.ts");
 const { apiClient } = await vite.ssrLoadModule("/src/api/client.ts");
 const { tokenStorage } = await vite.ssrLoadModule("/src/auth/tokenStorage.ts");
@@ -530,6 +530,111 @@ const legacy = { ...processed, _id: "66e83a109af861ce27c86a04", kind: undefined,
 const version2 = { ...processed, _id: "66e83a109af861ce27c86a05", format: "jpeg", quality: 90, transformations: { rotate: 90, filters: { grayscale: true }, format: "jpeg", quality: 90 } };
 const pageResponse = (items, page = 1, limit = 10, total = items.length) => ({ items, page, limit, total, totalPages: Math.ceil(total / limit) });
 
+// Put every original after its versions to exercise families across API pages.
+function archiveFixture(count, versionsPerOriginal) {
+  let id = 1;
+  const nextId = () => (id++).toString(16).padStart(24, "0");
+  const originals = Array.from({ length: count }, () => ({ ...original, _id: nextId() }));
+  const versions = originals.flatMap((image, index) => Array.from({ length: versionsPerOriginal(index) }, () => ({
+    ...processed, _id: nextId(), originalImageId: image._id,
+  })));
+  return { originals, records: [...versions, ...originals] };
+}
+
+function serveArchive(records, requests = []) {
+  apiClient.defaults.adapter = async (config) => {
+    const { page, limit } = config.params;
+    requests.push({ page, limit });
+    return response(config, pageResponse(records.slice((page - 1) * limit, page * limit), page, limit, records.length), 200);
+  };
+}
+
+test("ten raw records for five originals produce five cards on one group page", async () => {
+  const { records } = archiveFixture(5, () => 1);
+  serveArchive(records);
+  const groups = history.groupImagesByOriginal(await getImageArchive(signal()));
+  const page = history.paginateImageGroups(groups);
+  assert.equal(records.length, 10);
+  assert.equal(page.items.length, 5);
+  assert.equal(page.total, 5);
+  assert.equal(page.totalPages, 1);
+  assert.equal(page.from, 1);
+  assert.equal(page.to, 5);
+  assert.ok(page.items.every((group) => group.original && group.versions.length === 1));
+});
+
+test("group pagination keeps complete families across API boundaries and Next/Previous", async () => {
+  const { records, originals } = archiveFixture(23, (index) => index % 5 + 1);
+  const requests = [];
+  serveArchive(records, requests);
+  const groups = history.groupImagesByOriginal(await getImageArchive(signal()));
+  assert.deepEqual(requests, [{ page: 1, limit: 50 }, { page: 2, limit: 50 }]);
+  assert.equal(groups.length, originals.length);
+  const pages = [1, 2, 3].map((page) => history.paginateImageGroups(groups, page));
+  assert.deepEqual(pages.map((page) => page.items.length), [10, 10, 3]);
+  assert.deepEqual(pages.map((page) => [page.from, page.to]), [[1, 10], [11, 20], [21, 23]]);
+  assert.ok(pages.every((page) => page.total === 23 && page.totalPages === 3));
+  assert.equal(new Set(pages.flatMap((page) => page.items.map((group) => group.key))).size, 23);
+  for (const [index, group] of pages.flatMap((page) => page.items).entries()) {
+    assert.equal(group.original._id, originals[index]._id);
+    assert.equal(group.versions.length, index % 5 + 1);
+    assert.ok(group.versions.every((version) => version.originalImageId === group.original._id));
+  }
+  assert.deepEqual(history.paginateImageGroups(groups, pages[1].page - 1), pages[0]);
+  assert.equal(requests.length, 2, "Navigation uses the complete archive without refetching raw pages");
+});
+
+test("empty archives, legacy records, orphans and deletion use honest group totals", async () => {
+  serveArchive([]);
+  assert.deepEqual(await getImageArchive(signal()), []);
+  assert.deepEqual(history.paginateImageGroups([]), { items: [], page: 1, limit: 10, total: 0, totalPages: 0, from: 0, to: 0 });
+  const groups = history.groupImagesByOriginal([processed, version2, legacy]);
+  assert.equal(history.paginateImageGroups(groups).total, 2);
+  const { records } = archiveFixture(11, () => 2);
+  const before = history.groupImagesByOriginal(records);
+  assert.equal(history.paginateImageGroups(before, 2).items.length, 1);
+  const after = before.slice(0, 10);
+  const page = history.paginateImageGroups(after, 2);
+  assert.equal(page.page, 1, "Deleting the last card on page two returns to page one");
+  assert.equal(page.items.length, 10);
+});
+
+test("a failed later API page cannot return a partial archive; manual retry reloads it", async () => {
+  const { records } = archiveFixture(20, () => 2);
+  apiClient.defaults.adapter = async (config) => {
+    if (config.params.page === 2) throw httpError(503, config);
+    return response(config, pageResponse(records.slice(0, 50), 1, 50, records.length));
+  };
+  await assert.rejects(getImageArchive(signal()), (error) => error.response.status === 503);
+  serveArchive(records);
+  assert.deepEqual(await getImageArchive(signal()), records);
+});
+
+test("archive collection rejects count changes, duplicate offsets and incomplete pages", async () => {
+  const { records } = archiveFixture(20, () => 2);
+  for (const scenario of ["count", "duplicate", "short"]) {
+    apiClient.defaults.adapter = async (config) => {
+      if (config.params.page === 1) return response(config, pageResponse(records.slice(0, 50), 1, 50, records.length));
+      const items = scenario === "duplicate" ? [records[0], ...records.slice(51)] : scenario === "short" ? records.slice(51) : records.slice(50);
+      return response(config, pageResponse(items, 2, 50, records.length + (scenario === "count" ? 1 : 0)));
+    };
+    await assert.rejects(getImageArchive(signal()), /archive changed while loading/);
+  }
+});
+
+test("cancelling archive loading stops later page requests", async () => {
+  const controller = new AbortController();
+  const { records } = archiveFixture(20, () => 2);
+  let requests = 0;
+  apiClient.defaults.adapter = async (config) => {
+    requests++;
+    controller.abort();
+    return response(config, pageResponse(records.slice(0, 50), 1, 50, records.length));
+  };
+  await assert.rejects(getImageArchive(controller.signal));
+  assert.equal(requests, 1);
+});
+
 test("history requests exact server pagination with the existing Bearer interceptor", async () => {
   tokenStorage.setToken("history-test-token");
   apiClient.defaults.adapter = async (config) => {
@@ -599,7 +704,7 @@ test("groups multiple versions with the original even when versions arrive first
   assert.deepEqual(records, snapshot);
 });
 
-test("keeps page-level orphan versions visible and distinguishes unlinked/legacy records", () => {
+test("keeps orphan versions visible and distinguishes unlinked/legacy records", () => {
   const unlinked = { ...processed, _id: "66e83a109af861ce27c86a06", originalImageId: undefined };
   const groups = history.groupImagesByOriginal([processed, version2, unlinked, legacy]);
   assert.equal(groups.length, 3);
@@ -652,7 +757,7 @@ test("corrects empty pages after a final deletion, cascade deletion, or concurre
 });
 
 test("delete confirmations distinguish original cascade, individual version, and legacy image", () => {
-  assert.match(history.imageDeleteMessage(original), /all of its transformed versions, including versions on other pages/);
+  assert.match(history.imageDeleteMessage(original), /all of its transformed versions/);
   assert.match(history.imageDeleteMessage(processed), /original image and other versions will be kept/);
   assert.match(history.imageDeleteMessage(legacy), /Only this saved image/);
   const markup = renderToStaticMarkup(createElement(DeleteImageDialog, { image: original, pending: true, error: null, onCancel() {}, onConfirm() {}, onRefresh() {} }));
@@ -708,11 +813,12 @@ test("list, detail, and delete preserve the global 401 behavior and cancellation
 test("gallery renders actual labels, groups and details without exposing S3 keys", () => {
   const group = history.groupImagesByOriginal([version2, processed, original])[0];
   const markup = renderToStaticMarkup(createElement(ImageGroupCard, { group, deleteDisabled: false, onDelete() {} }));
-  for (const text of ["Original", "Processed version", "View versions", "(2)", "on this page", "Image details", "Rotate 90°", "Grayscale", "Quality 90"]) assert.ok(markup.includes(text), text);
+  for (const text of ["Original", "Processed version", "View versions", "(2)", "Image details", "Rotate 90°", "Grayscale", "Quality 90"]) assert.ok(markup.includes(text), text);
+  assert.ok(!markup.includes("on this page"));
   assert.doesNotMatch(markup, /originals\/user\/|transformed\/user\//);
   const orphan = history.groupImagesByOriginal([{ ...processed, url: undefined, downloadUrl: undefined, urlExpiresAt: undefined }])[0];
   const orphanMarkup = renderToStaticMarkup(createElement(ImageGroupCard, { group: orphan, deleteDisabled: false, onDelete() {} }));
-  assert.match(orphanMarkup, /original is not on this page/);
+  assert.match(orphanMarkup, /original is unavailable/);
   assert.match(orphanMarkup, /Refresh preview/);
   assert.doesNotMatch(orphanMarkup, /<img/);
 });

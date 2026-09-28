@@ -89,6 +89,17 @@ uniqueness check is on email, not username.
 LocalStorage fits this project's existing Bearer flow, but is accessible to
 JavaScript and is not a claim of the most secure production session design.
 
+## Free demo startup
+
+The shared API timeout is 120 seconds to allow Render's free service to wake.
+After eight seconds, a pending request shows a polite startup notice near its
+flow's status controls. This does not abort or repeat the request. The notice
+clears on success, failure, and cancellation, including concurrent requests.
+Failed sign-in/registration keeps the form mounted and offers a Retry submit
+action using its existing values. Network/timeout errors remain distinct from
+an actual 401 invalid-credentials response. Session verification and history
+retain their existing retry controls. No request is automatically retried.
+
 ## Verification
 
 ```bash

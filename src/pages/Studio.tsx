@@ -10,6 +10,7 @@ import TransformationControls from "../components/images/TransformationControls"
 import ProcessingResult from "../components/images/ProcessingResult";
 import { buildTransformRequest, createDefaultSettings, prepareImagePreview } from "../utils/images";
 import { resetCropForImage } from "../utils/crop";
+import ServiceStatus from "../components/ServiceStatus";
 
 function Studio() {
   const [selected, setSelected] = useState<SelectedImage | null>(null);
@@ -18,6 +19,7 @@ function Studio() {
   const [result, setResult] = useState<ImageMetadata | null>(null);
   const [phase, setPhase] = useState<"idle" | "checking" | "uploading" | "processing" | "refreshing">("idle");
   const [error, setError] = useState("");
+  const [processFailed, setProcessFailed] = useState(false);
   const request = useRef<AbortController | null>(null);
   const previewUrl = useRef<string | null>(null);
   const selectionVersion = useRef(0);
@@ -38,6 +40,7 @@ function Studio() {
     setOriginal(null);
     setResult(null);
     setError("");
+    setProcessFailed(false);
   }
 
   async function selectImage(files: File[]) {
@@ -52,6 +55,7 @@ function Studio() {
       if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
       previewUrl.current = image.url;
       setSelected(image);
+      setProcessFailed(false);
       setSettings((current) => resetCropForImage(current, image));
       setOriginal(null);
       setResult(null);
@@ -79,6 +83,7 @@ function Studio() {
     const controller = new AbortController();
     request.current = controller;
     setError("");
+    setProcessFailed(false);
     try {
       const body = buildTransformRequest(settings, selected);
       let source = original;
@@ -92,7 +97,10 @@ function Studio() {
       const processed = await transformImage(source._id, body, controller.signal);
       if (!controller.signal.aborted) setResult(processed);
     } catch (error: unknown) {
-      if (!controller.signal.aborted) setError(getImageErrorMessage(error));
+      if (!controller.signal.aborted) {
+        setError(getImageErrorMessage(error));
+        setProcessFailed(true);
+      }
     } finally {
       if (request.current === controller) request.current = null;
       if (!controller.signal.aborted) setPhase("idle");
@@ -109,7 +117,7 @@ function Studio() {
       const refreshed = await refreshImageLinks(result._id, controller.signal);
       if (!controller.signal.aborted) setResult(refreshed);
     } catch (error: unknown) {
-      if (!controller.signal.aborted) setError(getImageErrorMessage(error));
+      if (!controller.signal.aborted) setError(getImageErrorMessage(error, "load"));
     } finally {
       if (request.current === controller) request.current = null;
       if (!controller.signal.aborted) setPhase("idle");
@@ -144,13 +152,14 @@ function Studio() {
               {original && <p>Your original is saved. Retrying uses that original without uploading it again.</p>}
             </div>
             <button type="submit" disabled={!selected || busy} className="flex min-h-12 w-full shrink-0 cursor-pointer items-center justify-between gap-6 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">
-              {busy ? status : original ? "Retry processing" : "Process image"}
+              {busy ? status : processFailed ? original ? "Retry processing" : "Retry upload and process" : "Process image"}
               {busy ? <LoaderCircle size={18} aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ArrowRight size={18} aria-hidden="true" />}
             </button>
           </div>
         </form>
       )}
       <p role="status" aria-atomic="true" className="mt-4 text-sm text-muted-ink">{status}</p>
+      <ServiceStatus />
       <div role="alert" aria-atomic="true">{error && <p className="mt-4 border-l-2 border-ink bg-specimen-paper px-4 py-3 text-sm leading-relaxed">{error}</p>}</div>
       {result && <ProcessingResult key={`${result._id}:${result.urlExpiresAt}:${result.url}`} image={result} refreshing={phase === "refreshing"} onRefresh={refreshLinks} onReset={() => { clearSelection(); setSettings(createDefaultSettings()); }} />}
       <Link to="/dashboard" className="mt-6 inline-flex min-h-11 items-center text-sm underline">Back to dashboard</Link>

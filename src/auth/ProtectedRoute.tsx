@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "./useAuth";
+import ServiceStatus from "../components/ServiceStatus";
 
 export default function ProtectedRoute({ guestOnly = false }: { guestOnly?: boolean }) {
   const { isAuthenticated, isRestoring, sessionError, retrySession, logout } = useAuth();
@@ -16,6 +17,7 @@ export default function ProtectedRoute({ guestOnly = false }: { guestOnly?: bool
           <p role={sessionError ? "alert" : "status"} className="mt-4 text-sm leading-relaxed text-muted-ink">
             {sessionError ?? "Please wait while we reconnect you to the archive."}
           </p>
+          <ServiceStatus />
           {sessionError && (
             <div className="mt-6 flex flex-wrap gap-4">
               <button type="button" onClick={retrySession} className="min-h-12 cursor-pointer rounded-sm bg-ink px-5 text-paper focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink">
