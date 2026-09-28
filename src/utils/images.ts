@@ -1,4 +1,6 @@
 import type { ImageFormat, ImageTransformations, TransformationSettings, TransformImageRequest } from "../api/images.types";
+import type { ImageDimensions } from "./crop";
+import { imagePreviewSource } from "./imagePreviewSource";
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // Exclusive backend limit.
 export const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp";
@@ -35,20 +37,20 @@ export async function validateImageFile(file: File): Promise<string> {
 
 export async function prepareImagePreview(file: File) {
   const mimeType = await validateImageFile(file);
-  const url = URL.createObjectURL(file);
+  const url = URL.createObjectURL(await imagePreviewSource(file, mimeType));
   try {
     const image = new Image();
     image.src = url;
     await image.decode();
     if (!image.naturalWidth || !image.naturalHeight) throw new Error("No image dimensions");
-    return { file, url, mimeType };
+    return { file, url, mimeType, width: image.naturalWidth, height: image.naturalHeight };
   } catch {
     URL.revokeObjectURL(url);
     throw new ImageInputError("This image could not be opened. It may be damaged. Choose another image.");
   }
 }
 
-export function buildTransformRequest(settings: TransformationSettings): TransformImageRequest {
+export function buildTransformRequest(settings: TransformationSettings, originalSize?: ImageDimensions): TransformImageRequest {
   function dimension(value: string, label: string): number | undefined {
     if (!value.trim()) return undefined;
     const number = Number(value);
@@ -80,6 +82,9 @@ export function buildTransformRequest(settings: TransformationSettings): Transfo
     }
     const x = offset(settings.cropX, "Crop X");
     const y = offset(settings.cropY, "Crop Y");
+    if (originalSize && ((x ?? 0) + cropWidth > originalSize.width || (y ?? 0) + cropHeight > originalSize.height)) {
+      throw new ImageInputError(`The crop must fit within the original image (${originalSize.width} × ${originalSize.height} pixels). Adjust the selection or reset the crop.`);
+    }
     transformations.crop = { width: cropWidth, height: cropHeight, ...(x !== undefined && { x }), ...(y !== undefined && { y }) };
   }
 

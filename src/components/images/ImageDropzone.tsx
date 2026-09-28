@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ImagePlus, X } from "lucide-react";
 import { IMAGE_ACCEPT } from "../../utils/images";
 import ImagePreview, { type SelectedImage } from "./ImagePreview";
@@ -12,27 +12,42 @@ interface ImageDropzoneProps {
 
 export default function ImageDropzone({ image, disabled, onSelect, onRemove }: ImageDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const dragDepth = useRef(0);
+  const dragActive = isDragging && !disabled;
   return (
     <div
-      className={`min-w-0 border border-dashed transition-colors motion-reduce:transition-none ${isDragging && !disabled ? "border-ink bg-specimen-paper" : "border-specimen-line bg-specimen-paper/40"}`}
+      className={`group min-w-0 border border-dashed transition-colors duration-150 motion-reduce:transition-none ${dragActive ? "border-ink bg-specimen-paper" : "border-specimen-line bg-specimen-paper/40"} ${disabled ? "" : "hover:border-ink focus-within:border-ink"}`}
+      onDragEnter={(event) => {
+        if (disabled || !Array.from(event.dataTransfer.types).includes("Files")) return;
+        event.preventDefault();
+        dragDepth.current += 1;
+        setIsDragging(true);
+      }}
       onDragOver={(event) => {
+        if (!Array.from(event.dataTransfer.types).includes("Files")) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = disabled ? "none" : "copy";
-        if (!disabled) setIsDragging(true);
       }}
-      onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsDragging(false);
+      onDragLeave={() => {
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setIsDragging(false);
       }}
       onDrop={(event) => {
         event.preventDefault();
+        dragDepth.current = 0;
         setIsDragging(false);
-        if (!disabled) onSelect(Array.from(event.dataTransfer.files));
+        if (!disabled && event.dataTransfer.files.length) onSelect(Array.from(event.dataTransfer.files));
       }}
     >
       {image ? <ImagePreview image={image} /> : (
         <div className="flex min-h-64 flex-col items-center justify-center px-6 pt-10 text-center sm:min-h-80">
-          <ImagePlus size={36} strokeWidth={1} aria-hidden="true" />
-          <h3 className="mt-5 font-editorial text-3xl">Introduce your image.</h3>
+          <div aria-hidden="true" className="relative grid size-20 place-items-center">
+            <span className="absolute inset-0 translate-x-1 translate-y-1 border border-archive-line bg-specimen-paper" />
+            <span className={`relative grid size-20 place-items-center border border-specimen-line bg-paper transition-transform duration-150 ease-out motion-reduce:transition-none ${dragActive ? "motion-safe:-translate-y-1" : disabled ? "" : "motion-safe:group-hover:-translate-y-1 motion-safe:group-focus-within:-translate-y-1"}`}>
+              <ImagePlus size={32} strokeWidth={1} />
+            </span>
+          </div>
+          <h3 className="mt-5 font-editorial text-3xl">{dragActive ? "Release your specimen." : "Introduce your image."}</h3>
           <p className="mt-3 max-w-xs text-sm leading-relaxed text-muted-ink">Drag an image here, or choose a file below.</p>
         </div>
       )}

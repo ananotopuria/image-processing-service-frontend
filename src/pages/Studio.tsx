@@ -9,6 +9,7 @@ import type { SelectedImage } from "../components/images/ImagePreview";
 import TransformationControls from "../components/images/TransformationControls";
 import ProcessingResult from "../components/images/ProcessingResult";
 import { buildTransformRequest, createDefaultSettings, prepareImagePreview } from "../utils/images";
+import { resetCropForImage } from "../utils/crop";
 
 function Studio() {
   const [selected, setSelected] = useState<SelectedImage | null>(null);
@@ -33,6 +34,7 @@ function Studio() {
     if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
     previewUrl.current = null;
     setSelected(null);
+    setSettings((current) => resetCropForImage(current));
     setOriginal(null);
     setResult(null);
     setError("");
@@ -50,6 +52,7 @@ function Studio() {
       if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
       previewUrl.current = image.url;
       setSelected(image);
+      setSettings((current) => resetCropForImage(current, image));
       setOriginal(null);
       setResult(null);
     } catch (error: unknown) {
@@ -77,7 +80,7 @@ function Studio() {
     request.current = controller;
     setError("");
     try {
-      const body = buildTransformRequest(settings);
+      const body = buildTransformRequest(settings, selected);
       let source = original;
       if (!source) {
         setPhase("uploading");
@@ -122,21 +125,23 @@ function Studio() {
       <p className="mt-4 max-w-xl text-[15px] leading-[1.8] text-muted-ink">Crop, resize, rotate, and refine. Shape your image with a considered set of tools, then save a new version.</p>
       {!result && (
         <form onSubmit={processImage} noValidate className="mt-10 grid items-start gap-8 lg:grid-cols-[1.2fr_1fr] lg:gap-x-12 lg:gap-y-8" aria-busy={busy}>
-          <section aria-labelledby="original-title" className="min-w-0 lg:sticky lg:top-6">
+          <section aria-labelledby="original-title" className="min-w-0">
             <h2 id="original-title" className="mb-4 font-mono text-[11px]">01 / ORIGINAL IMAGE</h2>
             <ImageDropzone image={selected} disabled={busy} onSelect={selectImage} onRemove={clearSelection} />
-            <p className="mt-4 font-mono text-[11px] text-muted-ink">ORIGINAL PREVIEW · CHANGES APPEAR AFTER PROCESSING</p>
-            <p className="mt-3 text-xs leading-relaxed text-muted-ink">Animated images use the first frame. Camera orientation metadata is not applied during processing, so the result may differ from this preview.</p>
+            <div className="mt-4 flex flex-col gap-3 text-muted-ink">
+              <p className="font-mono text-[11px] leading-relaxed">ORIGINAL PREVIEW · CHANGES APPEAR AFTER PROCESSING</p>
+              <p className="text-xs leading-relaxed">The preview uses the original pixel orientation so crop coordinates match processing. Camera rotation tags are ignored; use Orientation to rotate the result. Animated images use the first frame when processed.</p>
+            </div>
           </section>
           <section aria-labelledby="settings-title" className="min-w-0">
             <h2 id="settings-title" className="mb-4 font-mono text-[11px]">02 / DEFINE THE NEW FORM</h2>
-            <TransformationControls settings={settings} disabled={busy} onChange={(next) => { setSettings(next); setError(""); }} onReset={() => { setSettings(createDefaultSettings()); setError(""); }} />
+            <TransformationControls settings={settings} image={selected} disabled={busy} onChange={(next) => { setSettings(next); setError(""); }} onReset={() => { setSettings(createDefaultSettings()); setError(""); }} />
           </section>
           <div className="flex flex-col gap-5 border-t border-archive-line pt-6 sm:flex-row sm:items-center sm:justify-between lg:col-span-2">
-            <div className="max-w-lg text-xs leading-relaxed text-muted-ink">
+            <div className="flex min-w-0 max-w-lg flex-col gap-2 text-xs leading-relaxed text-muted-ink">
               <p>Crop → Resize → Flip / Mirror → Rotate → Grayscale → Sepia → Output</p>
-              <p className="mt-2">The original is preserved. Each successful process saves a separate version.</p>
-              {original && <p className="mt-2">Your original is saved. Retrying uses that original without uploading it again.</p>}
+              <p>The original is preserved. Each successful process saves a separate version.</p>
+              {original && <p>Your original is saved. Retrying uses that original without uploading it again.</p>}
             </div>
             <button type="submit" disabled={!selected || busy} className="flex min-h-12 w-full shrink-0 cursor-pointer items-center justify-between gap-6 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">
               {busy ? status : original ? "Retry processing" : "Process image"}

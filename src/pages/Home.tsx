@@ -2,6 +2,10 @@ import type { ReactNode } from "react";
 import { ArrowDown, ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import specimen from "../assets/logo1.png";
+import beetleSpecimen from "../assets/jewel-beetle-transparent.png";
+import fernTransformation from "../assets/fern-transformation.jpg";
+import optimizedFernTransformation from "../assets/fern-transformation-optimized.jpg";
+import SpecimenComparison from "../components/images/SpecimenComparison";
 
 function Moth({ className = "w-full" }: { className?: string }) {
   return (
@@ -147,9 +151,16 @@ function Home() {
           </div>
           <figure className="mx-auto w-full max-w-80 pt-4 sm:max-w-none sm:pt-6">
             <p className="text-right font-mono text-[11px] leading-relaxed text-muted-ink">
-              FIG. 001 / METAMORPHOSIS
+              FIG. 001 / JEWEL BEETLE
             </p>
-            <Moth className="mx-auto my-3 w-[70%] sm:my-6 sm:w-full" />
+            <img
+              src={beetleSpecimen}
+              alt="Hand-colored engraving of an emerald and bronze jewel beetle with delicate amber wings spread"
+              width={1536}
+              height={1024}
+              fetchPriority="high"
+              className="mx-auto my-3 block h-auto w-full object-contain sm:my-6"
+            />
             <figcaption className="flex flex-col gap-1 text-center sm:gap-3">
               <span className="font-editorial text-[22px] italic">
                 A study in transformation.
@@ -190,26 +201,35 @@ function Home() {
             {[false, true].map((processed) => (
               <figure
                 key={String(processed)}
-                className="border border-specimen-line bg-paper p-5"
+                className="min-w-0 border border-specimen-line bg-paper p-5"
               >
                 <div className="flex justify-between gap-3 border-b border-archive-line pb-3 font-mono text-[11px] leading-relaxed">
                   <span>{processed ? "PROCESSED" : "ORIGINAL"} SPECIMEN</span>
                   <span>FIG. {processed ? "001-B" : "001"}</span>
                 </div>
-                <div className="relative grid min-h-45 place-items-center px-8.75 py-5 sm:min-h-50 sm:px-5 lg:min-h-61.25 lg:px-16.25">
-                  <Moth className={processed ? "w-[77%]" : "w-full"} />
+                <div className="relative grid min-h-45 place-items-center px-2 pt-5 pb-10 sm:min-h-50 sm:px-5 lg:min-h-61.25 lg:px-16.25">
+                  <div className="grid aspect-3/2 w-full place-items-center">
+                    <img
+                      src={processed ? optimizedFernTransformation : fernTransformation}
+                      alt={`${processed ? "Resized and optimized" : "Original"} botanical engraving of a fern unfurling through three stages`}
+                      width={processed ? 768 : 1536}
+                      height={processed ? 512 : 1024}
+                      loading="lazy"
+                      className={`block h-auto object-contain mix-blend-multiply ${processed ? "w-[77%]" : "w-full"}`}
+                    />
+                  </div>
                   {processed && (
                     <span className="absolute right-0 bottom-3 font-mono text-[11px] leading-relaxed text-muted-ink">
-                      QUALITY / 82
+                      QUALITY / 72
                     </span>
                   )}
                 </div>
                 <figcaption>
                   <dl className="grid grid-cols-[1.5fr_1fr_1fr] gap-3 border-t border-archive-line pt-4 font-mono">
                     {[
-                      ["DIMENSIONS", processed ? "1200 × 1600" : "3024 × 4032"],
-                      ["FORMAT", processed ? "WEBP" : "JPEG"],
-                      ["FILE SIZE", processed ? "684 KB" : "4.82 MB"],
+                      ["DIMENSIONS", processed ? "768 × 512" : "1536 × 1024"],
+                      ["FORMAT", "JPEG"],
+                      ["FILE SIZE", processed ? "103.2 KB" : "491.3 KB"],
                     ].map(([label, value]) => (
                       <div key={label}>
                         <dt className="mb-1 text-[10px] text-muted-ink">
@@ -224,9 +244,13 @@ function Home() {
             ))}
           </div>
           <p className="mt-4.5 text-xs leading-relaxed text-muted-ink">
-            Illustrative example. Output size and appearance depend on your
-            image and processing settings.
+            Same fern, half the dimensions. Metadata describes the actual image
+            files; sizes are rounded (1 KB = 1,000 bytes). Previews scale to fit.
           </p>
+          <SpecimenComparison
+            originalSrc={fernTransformation}
+            processedSrc={optimizedFernTransformation}
+          />
         </div>
       </section>
 

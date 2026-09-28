@@ -1,10 +1,34 @@
 import type { ReactNode } from "react";
 import specimen from "../../assets/logo1.png";
+import mothLifeStages from "../../assets/moth-life-stages-transparent.png";
 
 type AuthLayoutProps = {
   mode: "login" | "register";
   children: ReactNode;
 };
+
+function TransformationStudy({ className }: { className: string }) {
+  return (
+    <figure className={className}>
+      <div className="flex items-center gap-4 font-mono text-[10px] text-muted-ink">
+        <span>FIG. 001</span>
+        <span className="h-px flex-1 bg-archive-line" />
+        <span>LEPIDOPTERA</span>
+      </div>
+      <img
+        src={mothLifeStages}
+        alt="Antique-style sepia engraving showing a spread-wing moth, caterpillar, and chrysalis arranged vertically"
+        width={1024}
+        height={1536}
+        loading="lazy"
+        className="mx-auto my-4 block h-auto w-44 max-w-full object-contain lg:w-52"
+      />
+      <figcaption className="text-center font-editorial text-xl italic">
+        A study in transformation.
+      </figcaption>
+    </figure>
+  );
+}
 
 function AuthLayout({ mode, children }: AuthLayoutProps) {
   const isRegister = mode === "register";
@@ -31,27 +55,29 @@ function AuthLayout({ mode, children }: AuthLayoutProps) {
             </h2>
           </div>
 
-          <figure className="my-9">
-            <div className="flex items-center gap-4 font-mono text-[10px] text-muted-ink">
-              <span>FIG. {isRegister ? "002" : "001"}</span>
-              <span className="h-px flex-1 bg-archive-line" />
-              <span>LEPIDOPTERA</span>
-            </div>
-            <div className="relative mx-auto my-6 aspect-350/230 w-full max-w-85 overflow-hidden">
-              <img
-                src={specimen}
-                alt="Engraved moth specimen with its wings spread"
-                width={2046}
-                height={769}
-                className="absolute top-[-115.22%] left-[-133.14%] w-[584.57%] max-w-none"
-              />
-            </div>
-            <figcaption className="text-center font-editorial text-xl italic">
-              {isRegister
-                ? "The beginning of a new collection."
-                : "A study in transformation."}
-            </figcaption>
-          </figure>
+          {isRegister ? (
+            <figure className="my-9">
+              <div className="flex items-center gap-4 font-mono text-[10px] text-muted-ink">
+                <span>FIG. 002</span>
+                <span className="h-px flex-1 bg-archive-line" />
+                <span>LEPIDOPTERA</span>
+              </div>
+              <div className="relative mx-auto my-6 aspect-350/230 w-full max-w-85 overflow-hidden">
+                <img
+                  src={specimen}
+                  alt="Engraved moth specimen with its wings spread"
+                  width={2046}
+                  height={769}
+                  className="absolute top-[-115.22%] left-[-133.14%] w-[584.57%] max-w-none"
+                />
+              </div>
+              <figcaption className="text-center font-editorial text-xl italic">
+                The beginning of a new collection.
+              </figcaption>
+            </figure>
+          ) : (
+            <TransformationStudy className="my-6" />
+          )}
 
           <div className="flex flex-wrap justify-between gap-3 border-t border-archive-line pt-5 font-mono text-[10px] leading-relaxed text-muted-ink">
             <span>ORIGINAL → TRANSFORM → PRESERVE</span>
@@ -76,6 +102,9 @@ function AuthLayout({ mode, children }: AuthLayoutProps) {
                 : "Continue processing, transforming and preserving your images."}
             </p>
             {children}
+            {!isRegister && (
+              <TransformationStudy className="mt-8 border-t border-archive-line pt-6 lg:hidden" />
+            )}
           </div>
         </div>
       </div>

@@ -17,6 +17,8 @@ globalThis.window = {
 process.env.VITE_API_URL = "https://api.example.test";
 const vite = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "error" });
 const helpers = await vite.ssrLoadModule("/src/utils/images.ts");
+const cropHelpers = await vite.ssrLoadModule("/src/utils/crop.ts");
+const { imagePreviewSource } = await vite.ssrLoadModule("/src/utils/imagePreviewSource.ts");
 const { createUploadFormData, uploadImage, transformImage, refreshImageLinks, getImageById, getImages, deleteImage } = await vite.ssrLoadModule("/src/api/images.ts");
 const history = await vite.ssrLoadModule("/src/utils/imageHistory.ts");
 const { apiClient } = await vite.ssrLoadModule("/src/api/client.ts");
@@ -297,6 +299,162 @@ test("crop requires both dimensions and rejects invalid sizes and offsets", () =
   }
   for (const field of ["cropX", "cropY"]) for (const value of ["-1", "0.5", "NaN", "Infinity", String(Number.MAX_SAFE_INTEGER + 1)]) {
     assert.throws(() => helpers.buildTransformRequest({ ...settings, [field]: value }), /whole number/);
+  }
+});
+
+test("visual landscape and portrait crops become exact original-pixel API coordinates", () => {
+  for (const [image, expected] of [
+    [{ width: 3000, height: 2000 }, { x: 300, y: 500, width: 1500, height: 1000 }],
+    [{ width: 2000, height: 3000 }, { x: 200, y: 750, width: 1000, height: 1500 }],
+  ]) {
+    const crop = cropHelpers.percentCropToPixels({ unit: "%", x: 10, y: 25, width: 50, height: 50 }, image);
+    const settings = editorSettings({ cropEnabled: true, ...cropHelpers.cropFields(crop), width: "800", rotate: "90" });
+    assert.deepEqual(helpers.buildTransformRequest(settings, image), { transformations: {
+      crop: expected, resize: { width: 800 }, rotate: 90,
+    } });
+    assert.deepEqual(cropHelpers.settingsCrop(settings, image), expected);
+  }
+});
+
+test("responsive display size never changes the crop sent to the backend", () => {
+  const image = { width: 3024, height: 4032 };
+  const expected = { x: 756, y: 1008, width: 1512, height: 2016 };
+  // The same rectangle drawn on a desktop or mobile rendition of the portrait.
+  for (const width of [600, 240, 137]) {
+    const height = width * image.height / image.width;
+    const selection = { unit: "%", x: (width / 4) / width * 100, y: (height / 4) / height * 100,
+      width: (width / 2) / width * 100, height: (height / 2) / height * 100 };
+    assert.deepEqual(cropHelpers.percentCropToPixels(selection, image), expected);
+  }
+  assert.deepEqual(cropHelpers.percentCropToPixels(cropHelpers.pixelsToPercentCrop(expected, image), image), expected);
+});
+
+test("visual selection is sent to transform-original after uploading only the untouched file", async () => {
+  const file = png();
+  const image = { width: 3000, height: 2000 };
+  const crop = cropHelpers.percentCropToPixels({ unit: "%", x: 10, y: 25, width: 50, height: 50 }, image);
+  const body = helpers.buildTransformRequest(editorSettings({ cropEnabled: true, ...cropHelpers.cropFields(crop), width: "800", rotate: "90" }), image);
+  const calls = [];
+  apiClient.defaults.adapter = async (config) => {
+    calls.push(config.url);
+    if (config.url === "/api/images/upload") {
+      assert.deepEqual([...config.data.keys()], ["file"]);
+      assert.equal(config.data.get("file"), file);
+      assert.deepEqual(Buffer.from(await config.data.get("file").arrayBuffer()), pngBytes);
+      return response(config, original);
+    }
+    assert.equal(config.url, `/api/images/${original._id}/transform`);
+    assert.deepEqual(JSON.parse(config.data), { transformations: {
+      crop: { x: 300, y: 500, width: 1500, height: 1000 }, resize: { width: 800 }, rotate: 90,
+    } });
+    return response(config, processed);
+  };
+  const source = await uploadImage(file, signal());
+  await transformImage(source._id, body, signal());
+  assert.deepEqual(calls, ["/api/images/upload", `/api/images/${original._id}/transform`]);
+});
+
+test("visual crop clamps bounds and rounds edges without spilling past the original", () => {
+  const image = { width: 1001, height: 667 };
+  assert.deepEqual(cropHelpers.percentCropToPixels({ unit: "%", x: -10, y: -20, width: 120, height: 140 }, image),
+    { x: 0, y: 0, width: 1001, height: 667 });
+  assert.deepEqual(cropHelpers.percentCropToPixels({ unit: "%", x: 99.99, y: 99.99, width: 20, height: 20 }, image),
+    { x: 1000, y: 666, width: 1, height: 1 });
+  assert.deepEqual(cropHelpers.percentCropToPixels({ unit: "%", x: 10, y: 20, width: 50, height: 40 }, image),
+    { x: 100, y: 133, width: 501, height: 267 });
+  for (const value of [0, -1, NaN, Infinity]) {
+    assert.equal(cropHelpers.percentCropToPixels({ unit: "%", x: 0, y: 0, width: value, height: 50 }, image), undefined);
+  }
+});
+
+test("large originals respect the backend's 4000-pixel crop dimension limit", () => {
+  const image = { width: 8000, height: 6000 };
+  const crop = cropHelpers.percentCropToPixels({ unit: "%", x: 10, y: 10, width: 90, height: 90 }, image);
+  assert.deepEqual(crop, { x: 800, y: 600, width: 4000, height: 4000 });
+  assert.deepEqual(helpers.buildTransformRequest(editorSettings({ cropEnabled: true, ...cropHelpers.cropFields(crop) }), image),
+    { transformations: { crop } });
+});
+
+test("out-of-bounds manual crop is rejected before upload even if resize dimensions are larger", () => {
+  const image = { width: 1200, height: 800 };
+  const settings = editorSettings({ cropEnabled: true, cropWidth: "1000", cropHeight: "700", cropX: "300", cropY: "0", width: "4000" });
+  assert.throws(() => helpers.buildTransformRequest(settings, image), /fit within the original image/);
+  assert.equal(cropHelpers.settingsCrop(settings, image), undefined);
+  assert.throws(() => helpers.buildTransformRequest({ ...settings, cropX: "0", cropY: "101" }, image), /fit within/);
+  assert.deepEqual(helpers.buildTransformRequest({ ...settings, cropX: "200", cropY: "100" }, image).transformations.crop,
+    { x: 200, y: 100, width: 1000, height: 700 });
+});
+
+test("image replacement resets crop to new bounds; removal and disable omit crop", () => {
+  const settings = editorSettings({ cropEnabled: true, cropWidth: "3000", cropHeight: "2000", cropX: "1000", cropY: "500", rotate: "90" });
+  const image = { width: 500, height: 800 };
+  const replaced = cropHelpers.resetCropForImage(settings, image);
+  assert.deepEqual(helpers.buildTransformRequest(replaced, image), { transformations: {
+    crop: { x: 50, y: 80, width: 400, height: 640 }, rotate: 90,
+  } });
+  const removed = cropHelpers.resetCropForImage(replaced);
+  assert.equal(removed.cropEnabled, false);
+  assert.equal(removed.cropWidth, "");
+  assert.equal(helpers.buildTransformRequest(removed).transformations.crop, undefined);
+  assert.equal(helpers.buildTransformRequest({ ...replaced, cropEnabled: false }, image).transformations.crop, undefined);
+  assert.equal(cropHelpers.resetCropForImage(removed, image).cropEnabled, false);
+  assert.deepEqual(cropHelpers.initialCrop({ width: 1, height: 1 }), { x: 0, y: 0, width: 1, height: 1 });
+});
+
+test("preview removes camera EXIF while uploading the exact unchanged original File", async () => {
+  const exif = Buffer.from("45786966000049492a0008000000010012010300010000000600000000000000", "hex");
+  const length = Buffer.alloc(2); length.writeUInt16BE(exif.length + 2);
+  const scan = Buffer.from([0xff, 0xda, 0, 2, 1, 2, 3, 0xff, 0xd9]);
+  const plain = Buffer.concat([Buffer.from([0xff, 0xd8]), scan]);
+  const originalBytes = Buffer.concat([plain.subarray(0, 2), Buffer.from([0xff, 0xe1]), length, exif, scan]);
+  const file = new File([originalBytes], "camera.jpg", { type: "image/jpeg" });
+  const preview = await imagePreviewSource(file, "image/jpeg");
+  assert.deepEqual(Buffer.from(await preview.arrayBuffer()), plain);
+  assert.deepEqual(Buffer.from(await file.arrayBuffer()), originalBytes);
+  const multipart = await createUploadFormData(file);
+  assert.equal(multipart.get("file"), file);
+  assert.deepEqual(Buffer.from(await multipart.get("file").arrayBuffer()), originalBytes);
+});
+
+test("PNG and WebP EXIF removal preserves image chunks and repairs container metadata", async () => {
+  const exif = Buffer.from("Exif\0\0test");
+  const pngChunk = Buffer.alloc(12 + exif.length);
+  pngChunk.writeUInt32BE(exif.length); pngChunk.write("eXIf", 4); exif.copy(pngChunk, 8);
+  const taggedPng = new File([pngBytes.subarray(0, 33), pngChunk, pngBytes.subarray(33)], "camera.png");
+  assert.deepEqual(Buffer.from(await (await imagePreviewSource(taggedPng, "image/png")).arrayBuffer()), pngBytes);
+  const chunk = (tag, data) => {
+    const result = Buffer.alloc(8 + data.length + data.length % 2);
+    result.write(tag); result.writeUInt32LE(data.length, 4); data.copy(result, 8); return result;
+  };
+  const header = Buffer.from("RIFF0000WEBP");
+  const vp8x = chunk("VP8X", Buffer.from([8, 0, 0, 0, 1, 0, 0, 1, 0, 0]));
+  const pixels = chunk("VP8 ", Buffer.from([1, 2, 3]));
+  const webp = Buffer.concat([header, vp8x, chunk("EXIF", exif), pixels]);
+  webp.writeUInt32LE(webp.length - 8, 4);
+  const cleaned = Buffer.from(await (await imagePreviewSource(new File([webp], "camera.webp"), "image/webp")).arrayBuffer());
+  const expected = Buffer.concat([header, vp8x, pixels]);
+  expected.writeUInt32LE(expected.length - 8, 4); expected[20] = 0;
+  assert.deepEqual(cleaned, expected);
+  assert.equal(webp[20], 8);
+});
+
+test("decoded original dimensions reach crop state without replacing the upload File", async () => {
+  const savedImage = globalThis.Image;
+  const create = URL.createObjectURL;
+  const revoke = URL.revokeObjectURL;
+  const file = png();
+  globalThis.Image = class { naturalWidth = 900; naturalHeight = 1600; async decode() {} };
+  URL.createObjectURL = () => "blob:original-crop";
+  URL.revokeObjectURL = () => {};
+  try {
+    const preview = await helpers.prepareImagePreview(file);
+    assert.equal(preview.file, file);
+    assert.equal(preview.width, 900);
+    assert.equal(preview.height, 1600);
+    assert.equal(preview.url, "blob:original-crop");
+  } finally {
+    URL.createObjectURL = create; URL.revokeObjectURL = revoke;
+    if (savedImage) globalThis.Image = savedImage; else delete globalThis.Image;
   }
 });
 

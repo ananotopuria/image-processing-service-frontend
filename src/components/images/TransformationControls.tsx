@@ -2,9 +2,13 @@ import type { ReactNode } from "react";
 import { ChevronDown, Crop, FlipHorizontal2, FlipVertical2, Maximize, Palette, RotateCw, SlidersHorizontal, Undo2 } from "lucide-react";
 import type { TransformationSettings } from "../../api/images.types";
 import { isImageFormat } from "../../utils/images";
+import { cropFields, initialCrop, settingsCrop } from "../../utils/crop";
+import type { SelectedImage } from "./ImagePreview";
+import VisualCropEditor from "./VisualCropEditor";
 
 interface TransformationControlsProps {
   settings: TransformationSettings;
+  image: SelectedImage | null;
   disabled: boolean;
   onChange: (settings: TransformationSettings) => void;
   onReset: () => void;
@@ -16,7 +20,7 @@ function EditorSection({ title, icon, summary, children, open = false }: {
   title: string; icon: ReactNode; summary: string; children: ReactNode; open?: boolean;
 }) {
   return (
-    <details open={open} className="group rounded-sm border border-archive-line bg-paper">
+    <details open={open} className="group min-w-0 rounded-sm border border-archive-line bg-paper">
       <summary className="flex min-h-16 cursor-pointer list-none items-center gap-3 px-5 py-4 [&::-webkit-details-marker]:hidden">
         {icon}
         <span className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -30,18 +34,18 @@ function EditorSection({ title, icon, summary, children, open = false }: {
   );
 }
 
-function Toggle({ label, checked, onChange, icon }: {
-  label: string; checked: boolean; onChange: (checked: boolean) => void; icon?: ReactNode;
+function Toggle({ label, checked, onChange, icon, disabled = false }: {
+  label: string; checked: boolean; onChange: (checked: boolean) => void; icon?: ReactNode; disabled?: boolean;
 }) {
   return (
     <label className={`flex min-h-12 cursor-pointer items-center gap-3 rounded-sm border px-3 py-2 text-sm has-disabled:cursor-not-allowed ${checked ? "border-ink bg-specimen-paper" : "border-archive-line"}`}>
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="size-4 shrink-0 accent-ink" />
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} className="size-4 shrink-0 accent-ink" />
       {icon}<span>{label}</span>
     </label>
   );
 }
 
-export default function TransformationControls({ settings, disabled, onChange, onReset }: TransformationControlsProps) {
+export default function TransformationControls({ settings, image, disabled, onChange, onReset }: TransformationControlsProps) {
   const resizeSummary = settings.width || settings.height ? `${settings.width || "Auto"} × ${settings.height || "Auto"} px` : "Original size";
   const orientationCount = Number(Boolean(Number(settings.rotate))) + Number(settings.flip) + Number(settings.mirror);
   const filters = [settings.grayscale && "Grayscale", settings.sepia && "Sepia"].filter(Boolean).join(" + ");
@@ -67,14 +71,21 @@ export default function TransformationControls({ settings, disabled, onChange, o
       </EditorSection>
 
       <EditorSection title="Crop" icon={<Crop size={17} aria-hidden="true" />} summary={settings.cropEnabled ? "Enabled" : "Off"}>
-        <Toggle label="Enable crop" checked={settings.cropEnabled} onChange={(cropEnabled) => onChange({ ...settings, cropEnabled })} />
-        {settings.cropEnabled && (
+        <Toggle label="Enable crop" checked={settings.cropEnabled} disabled={!image} onChange={(cropEnabled) => onChange({
+          ...settings, cropEnabled,
+          ...(cropEnabled && image && !settingsCrop(settings, image) ? cropFields(initialCrop(image)) : {}),
+        })} />
+        {!image && <p className="text-xs leading-relaxed text-muted-ink">Choose an image to select a crop area.</p>}
+        {settings.cropEnabled && image && (
+          <VisualCropEditor image={image} settings={settings} disabled={disabled} onChange={onChange} />
+        )}
+        {settings.cropEnabled && image && (
           <div className="grid grid-cols-2 gap-4">
             {([
-              ["cropWidth", "Crop width", 1, 4000, "Required"],
-              ["cropHeight", "Crop height", 1, 4000, "Required"],
-              ["cropX", "X · left offset", 0, Number.MAX_SAFE_INTEGER, "0"],
-              ["cropY", "Y · top offset", 0, Number.MAX_SAFE_INTEGER, "0"],
+              ["cropWidth", "Crop width", 1, Math.max(1, Math.min(4000, image.width - (Number(settings.cropX) || 0))), "Required"],
+              ["cropHeight", "Crop height", 1, Math.max(1, Math.min(4000, image.height - (Number(settings.cropY) || 0))), "Required"],
+              ["cropX", "X · left offset", 0, image.width - 1, "0"],
+              ["cropY", "Y · top offset", 0, image.height - 1, "0"],
             ] as const).map(([field, label, min, max, placeholder]) => (
               <div key={field}>
                 <label htmlFor={`image-${field}`} className="mb-2 block text-sm">{label}</label>
@@ -83,7 +94,7 @@ export default function TransformationControls({ settings, disabled, onChange, o
             ))}
           </div>
         )}
-        <p id="crop-help" className="text-xs leading-relaxed text-muted-ink">Crop coordinates use the original image dimensions, before resize or rotation. Width and height are required (1–4000 px). X and Y are whole-number offsets from the top-left, defaulting to 0. The rectangle must fit inside the original.</p>
+        <p id="crop-help" className="text-xs leading-relaxed text-muted-ink">The selection and fields stay in sync in original-image pixels, before resize or rotation. Crop width and height are limited to 4000 px. X and Y start at the top-left. Turn crop off to preserve the full image.</p>
       </EditorSection>
 
       <EditorSection title="Orientation" icon={<RotateCw size={17} aria-hidden="true" />} summary={orientationCount ? `${orientationCount} active` : "Unchanged"}>

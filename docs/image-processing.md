@@ -71,11 +71,23 @@ returns a processed result. No local Sharp processing or simulated result is use
 
 - **Resize:** optional width/height inputs. A single dimension is supported; an
   empty pair omits `resize`, with no invented dimensions or implicit resize.
-- **Crop:** Enable crop reveals required width/height and optional X/Y offsets.
+- **Crop:** After selecting an image, Enable crop opens a `react-image-crop`
+  editor with a centered selection. Users can draw, move, and resize the rectangle
+  with mouse/touch or keyboard, or edit the synchronized pixel fields.
   **Coordinates refer to the original image**, before resizing or rotation.
-  Changing resize settings never adjusts the crop. Blank offsets are omitted
-  so the backend defaults each to zero; explicit zero offsets are preserved.
-  Disabling crop retains the input values for editing but omits the whole operation.
+  The rendered selection uses percentages, converted by rounding its edges
+  against the original decoded width/height; resizing the viewport never changes
+  the request coordinates. Drawn selections are clamped to the original bounds
+  and the 4000-pixel width/height limit. Invalid typed values are rejected before
+  upload. Reset crop restores the centered selection; disabling retains values
+  but omits the operation. Replacing the file resets the crop to the new bounds,
+  while removal clears and disables it. Changing resize or rotation never changes
+  crop coordinates. Blank offsets still default to zero.
+
+  The editor stays within the control column and caps the preview at 352 CSS
+  pixels tall while preserving its aspect ratio. There is no letterboxed area
+  inside the cropper's measurement surface. Selection borders do not animate;
+  focus indicators and touch handles use the archival palette.
 - **Orientation:** numeric rotation with fractional/negative angles and 90°,
   180°, 270° quick actions. Clicking an active quick action or Clear removes
   rotation. Empty and zero angles are omitted. Flip vertically and Mirror
@@ -339,10 +351,15 @@ by the UI. There is no undo or backend idempotency mechanism.
 The UI maps errors to fixed useful messages without rendering arbitrary backend
 details. The one recognized crop-bounds message is parsed with an anchored numeric
 pattern and rewritten to explain the original dimensions and X/Y offsets. Other
-400s use a generic validation message. Crop size and offset ranges are checked
-locally, but the backend checks that the rectangle fits the original. Browser
-preview dimensions can reflect EXIF orientation, whereas backend coordinates do
-not, so the frontend does not use preview dimensions as authoritative crop bounds.
+400s use a generic validation message. Crop size, offset ranges, and original-image
+bounds are checked locally; the backend remains authoritative. For the preview
+only, EXIF metadata is removed from a temporary JPEG/PNG/WebP Blob so the browser
+decodes the same unrotated pixel orientation as the backend. JPEG compressed scans,
+PNG image chunks, and WebP image chunks are preserved; no canvas, crop, or pixel
+re-encoding is performed. PNG metadata chunks include their own CRC; WebP's RIFF
+size and EXIF-present flag are updated after removing its EXIF chunk. The decoded
+preview dimensions can therefore be used for original-pixel crop coordinates.
+The upload always uses the untouched original `File`, including its metadata.
 Development diagnostics log only status and error code. Network/CORS
 errors cannot reliably be distinguished in the browser. The backend now configures
 CORS from `CORS_ORIGINS` and permits Content-Type/Authorization; deployment must
@@ -394,3 +411,13 @@ behavior. Dashboard auth assertions still verify the greeting and navigation;
 their old placeholder assertions now require the real initial loading state.
 Server-rendered dialog/gallery tests do not verify browser focus, downloads, or
 live S3 access.
+
+Visual crop coverage additionally verifies portrait/landscape percent-to-pixel
+conversion, identical coordinates at mobile and desktop display sizes, edge
+rounding, out-of-bounds selections, the 4000-pixel cap, manual bounds validation,
+reset/replacement/disable behavior, metadata-neutral JPEG/PNG/WebP preview sources,
+and byte-for-byte preservation of the uploaded original. For example, selecting
+x=10%, y=25%, width=50%, height=50% on a 3000 × 2000 original produces
+`crop: { x: 300, y: 500, width: 1500, height: 1000 }` even with resize and rotation
+enabled. Dragging and responsive layout still require a connected browser for
+visual verification.

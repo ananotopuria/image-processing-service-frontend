@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "react-image-crop/dist/ReactCrop.css";
 
 @theme {
   --color-paper: #f4f0e7;
@@ -12,4 +13,28 @@
   --font-sans: Arial, Helvetica, sans-serif;
   --font-editorial: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
   --font-mono: "Courier New", monospace;
+}
+
+.specimen-crop {
+  --rc-drag-handle-bg-colour: var(--color-ink);
+  --rc-border-color: var(--color-paper);
+  --rc-focus-color: var(--color-ink);
+  display: block;
+  width: 100%;
+}
+
+.specimen-crop .ReactCrop__child-wrapper > img {
+  width: 100%;
+  height: auto;
+}
+
+.specimen-crop .ReactCrop__crop-selection {
+  animation: none;
+  box-shadow: 0 0 0 1px var(--color-ink);
+}
+
+.specimen-crop .ReactCrop__crop-selection:focus-visible,
+.specimen-crop .ReactCrop__drag-handle:focus-visible {
+  outline: 2px solid var(--color-paper);
+  box-shadow: 0 0 0 3px var(--color-ink);
 }

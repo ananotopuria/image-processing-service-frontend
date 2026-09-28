@@ -4,6 +4,8 @@ export interface SelectedImage {
   file: File;
   url: string;
   mimeType: string;
+  width: number;
+  height: number;
 }
 
 export default function ImagePreview({ image }: { image: SelectedImage }) {
