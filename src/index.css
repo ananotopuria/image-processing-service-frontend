@@ -15,6 +15,33 @@
   --font-mono: "Courier New", monospace;
 }
 
+/* Small, one-time movements keep the printed-page composition in place. */
+@keyframes specimen-arrive {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes image-skeleton-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .image-skeleton {
+    animation: image-skeleton-breathe 1.8s ease-in-out infinite;
+  }
+
+  .specimen-reveal[data-revealed="true"],
+  .specimen-result-arrive {
+    animation: specimen-arrive 550ms ease-out var(--reveal-delay, 0ms) backwards;
+  }
+
+  /* Keyboard focus must never wait for an entrance animation. */
+  .specimen-reveal:focus-within {
+    animation: none;
+  }
+}
+
 .specimen-crop {
   --rc-drag-handle-bg-colour: var(--color-ink);
   --rc-border-color: var(--color-paper);

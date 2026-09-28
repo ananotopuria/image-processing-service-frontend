@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Download, ExternalLink, RefreshCw } from "lucide-react";
 import type { ImageMetadata } from "../../api/images.types";
+import LoadingImage from "./LoadingImage";
 import { appliedTransformationLabels, calculateSizeReduction, formatFileSize, usableImageUrl } from "../../utils/images";
 
 interface ProcessingResultProps {
@@ -32,9 +33,9 @@ export default function ProcessingResult({ image, refreshing, onRefresh, onReset
       <p className="flex items-center gap-2 font-mono text-[11px] text-muted-ink"><Check size={16} aria-hidden="true" /> TRANSFORMATION COMPLETE</p>
       <h2 id="result-title" ref={heading} tabIndex={-1} className="mt-3 font-editorial text-4xl">A new form, ready.</h2>
       <div className="mt-7 grid gap-8 lg:grid-cols-[1.2fr_1fr]">
-        <div className="flex min-h-64 items-center justify-center border border-specimen-line bg-specimen-paper p-5 sm:min-h-80">
+        <div className="specimen-result-arrive flex min-h-64 items-center justify-center border border-specimen-line bg-specimen-paper p-5 sm:min-h-80">
           {url && !expired && !previewFailed ? (
-            <img src={url} alt={`Processed ${image.originalName}`} referrerPolicy="no-referrer" onError={() => setPreviewFailed(true)} className="max-h-112 max-w-full object-contain" />
+            <LoadingImage src={url} alt={`Processed ${image.originalName}`} width={image.width} height={image.height} referrerPolicy="no-referrer" onError={() => setPreviewFailed(true)} containerClassName="flex min-h-64 w-full items-center justify-center sm:min-h-80" className="max-h-112 max-w-full object-contain" />
           ) : <p className="max-w-sm text-center text-sm leading-relaxed text-muted-ink">{expired ? "The preview link has expired. Refresh the links to view your image again." : "Your image was processed, but its preview is unavailable. Refresh the links to try again."}</p>}
         </div>
         <div className="min-w-0">

@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { ArrowLeftRight, ChevronDown } from "lucide-react";
+import LoadingImage from "./LoadingImage";
 
 interface SpecimenComparisonProps {
   originalSrc: string;
@@ -28,23 +29,25 @@ export default function SpecimenComparison({ originalSrc, processedSrc }: Specim
           </div>
           <div className="relative isolate aspect-3/2 overflow-hidden border border-archive-line bg-paper" aria-hidden="true">
             {/* Both files use the same crop and scale so the divider compares detail fairly. */}
-            <img
+            <LoadingImage
               src={originalSrc}
               alt=""
               width={1536}
               height={1024}
               loading="lazy"
               draggable={false}
+              fill
               className="pointer-events-none absolute -top-1/2 -left-1/2 h-[200%] w-[200%] max-w-none mix-blend-multiply"
             />
             <div className="absolute inset-0 overflow-hidden bg-paper" style={{ clipPath: `inset(0 0 0 ${position}%)` }}>
-              <img
+              <LoadingImage
                 src={processedSrc}
                 alt=""
                 width={768}
                 height={512}
                 loading="lazy"
                 draggable={false}
+                fill
                 className="pointer-events-none absolute -top-1/2 -left-1/2 h-[200%] w-[200%] max-w-none mix-blend-multiply"
               />
             </div>

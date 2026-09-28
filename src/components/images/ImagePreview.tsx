@@ -1,4 +1,5 @@
 import { formatFileSize } from "../../utils/images";
+import LoadingImage from "./LoadingImage";
 
 export interface SelectedImage {
   file: File;
@@ -12,7 +13,7 @@ export default function ImagePreview({ image }: { image: SelectedImage }) {
   return (
     <figure className="min-w-0">
       <div className="flex min-h-56 items-center justify-center bg-paper p-4 sm:min-h-80">
-        <img src={image.url} alt={`Original preview: ${image.file.name}`} className="max-h-96 max-w-full object-contain" />
+        <LoadingImage src={image.url} alt={`Original preview: ${image.file.name}`} width={image.width} height={image.height} containerClassName="flex min-h-56 w-full items-center justify-center sm:min-h-80" className="max-h-96 max-w-full object-contain" />
       </div>
       <figcaption className="border-t border-archive-line p-5 text-left">
         <p className="wrap-anywhere text-sm font-semibold">{image.file.name}</p>

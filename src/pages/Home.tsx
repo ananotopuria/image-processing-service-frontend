@@ -6,6 +6,8 @@ import beetleSpecimen from "../assets/jewel-beetle-transparent.png";
 import fernTransformation from "../assets/fern-transformation.jpg";
 import optimizedFernTransformation from "../assets/fern-transformation-optimized.jpg";
 import SpecimenComparison from "../components/images/SpecimenComparison";
+import Reveal from "../components/Reveal";
+import LoadingImage from "../components/images/LoadingImage";
 
 function Moth({ className = "w-full" }: { className?: string }) {
   return (
@@ -35,7 +37,7 @@ function ProcessingLink({ inverted = false }: { inverted?: boolean }) {
       <ArrowRight
         size={18}
         aria-hidden="true"
-        className="transition-transform duration-200 group-hover:translate-x-1 motion-reduce:transition-none"
+        className="motion-safe:transition-transform motion-safe:duration-200 motion-safe:group-hover:translate-x-1 motion-safe:group-focus-visible:translate-x-1"
       />
     </Link>
   );
@@ -123,7 +125,7 @@ function Home() {
           <span className="hidden sm:inline">THE ART OF TRANSFORMATION</span>
         </div>
         <div className="grid items-center gap-3 pt-3 pb-6 sm:grid-cols-[1.1fr_1fr] sm:gap-6 sm:pt-10 sm:pb-13 lg:gap-12">
-          <div>
+          <Reveal>
             <p className="font-mono text-[11px] leading-relaxed">
               A NEW FORM FOR EVERY IMAGE
             </p>
@@ -148,28 +150,31 @@ function Home() {
                 Explore the process <ArrowDown size={15} aria-hidden="true" />
               </a>
             </div>
-          </div>
-          <figure className="mx-auto w-full max-w-80 pt-4 sm:max-w-none sm:pt-6">
-            <p className="text-right font-mono text-[11px] leading-relaxed text-muted-ink">
-              FIG. 001 / JEWEL BEETLE
-            </p>
-            <img
-              src={beetleSpecimen}
-              alt="Hand-colored engraving of an emerald and bronze jewel beetle with delicate amber wings spread"
-              width={1536}
-              height={1024}
-              fetchPriority="high"
-              className="mx-auto my-3 block h-auto w-full object-contain sm:my-6"
-            />
-            <figcaption className="flex flex-col gap-1 text-center sm:gap-3">
-              <span className="font-editorial text-[22px] italic">
-                A study in transformation.
-              </span>
-              <span className="font-mono text-[11px] leading-relaxed">
-                ORIGINAL → TRANSFORM → PRESERVE
-              </span>
-            </figcaption>
-          </figure>
+          </Reveal>
+          <Reveal delay={120}>
+            <figure className="mx-auto w-full max-w-80 pt-4 sm:max-w-none sm:pt-6">
+              <p className="text-right font-mono text-[11px] leading-relaxed text-muted-ink">
+                FIG. 001 / JEWEL BEETLE
+              </p>
+              <LoadingImage
+                src={beetleSpecimen}
+                alt="Hand-colored engraving of an emerald and bronze jewel beetle with delicate amber wings spread"
+                width={1536}
+                height={1024}
+                fetchPriority="high"
+                containerClassName="mx-auto my-3 aspect-3/2 w-full sm:my-6"
+                className="block h-auto w-full object-contain"
+              />
+              <figcaption className="flex flex-col gap-1 text-center sm:gap-3">
+                <span className="font-editorial text-[22px] italic">
+                  A study in transformation.
+                </span>
+                <span className="font-mono text-[11px] leading-relaxed">
+                  ORIGINAL → TRANSFORM → PRESERVE
+                </span>
+              </figcaption>
+            </figure>
+          </Reveal>
         </div>
         <div className="flex flex-wrap justify-between gap-2 border-t border-archive-line py-5 font-mono text-[11px] leading-relaxed sm:gap-4">
           <span>ONE IMAGE. MANY POSSIBILITIES.</span>
@@ -199,48 +204,50 @@ function Home() {
           </SectionHeading>
           <div className="grid gap-4.5 sm:grid-cols-2 sm:gap-12">
             {[false, true].map((processed) => (
-              <figure
-                key={String(processed)}
-                className="min-w-0 border border-specimen-line bg-paper p-5"
-              >
-                <div className="flex justify-between gap-3 border-b border-archive-line pb-3 font-mono text-[11px] leading-relaxed">
-                  <span>{processed ? "PROCESSED" : "ORIGINAL"} SPECIMEN</span>
-                  <span>FIG. {processed ? "001-B" : "001"}</span>
-                </div>
-                <div className="relative grid min-h-45 place-items-center px-2 pt-5 pb-10 sm:min-h-50 sm:px-5 lg:min-h-61.25 lg:px-16.25">
-                  <div className="grid aspect-3/2 w-full place-items-center">
-                    <img
-                      src={processed ? optimizedFernTransformation : fernTransformation}
-                      alt={`${processed ? "Resized and optimized" : "Original"} botanical engraving of a fern unfurling through three stages`}
-                      width={processed ? 768 : 1536}
-                      height={processed ? 512 : 1024}
-                      loading="lazy"
-                      className={`block h-auto object-contain mix-blend-multiply ${processed ? "w-[77%]" : "w-full"}`}
-                    />
+              <Reveal key={String(processed)} delay={processed ? 100 : 0}>
+                <figure
+                  className="min-w-0 border border-specimen-line bg-paper p-5"
+                >
+                  <div className="flex justify-between gap-3 border-b border-archive-line pb-3 font-mono text-[11px] leading-relaxed">
+                    <span>{processed ? "PROCESSED" : "ORIGINAL"} SPECIMEN</span>
+                    <span>FIG. {processed ? "001-B" : "001"}</span>
                   </div>
-                  {processed && (
-                    <span className="absolute right-0 bottom-3 font-mono text-[11px] leading-relaxed text-muted-ink">
-                      QUALITY / 72
-                    </span>
-                  )}
-                </div>
-                <figcaption>
-                  <dl className="grid grid-cols-[1.5fr_1fr_1fr] gap-3 border-t border-archive-line pt-4 font-mono">
-                    {[
-                      ["DIMENSIONS", processed ? "768 × 512" : "1536 × 1024"],
-                      ["FORMAT", "JPEG"],
-                      ["FILE SIZE", processed ? "103.2 KB" : "491.3 KB"],
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <dt className="mb-1 text-[10px] text-muted-ink">
-                          {label}
-                        </dt>
-                        <dd className="text-[13px]">{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </figcaption>
-              </figure>
+                  <div className="relative grid min-h-45 place-items-center px-2 pt-5 pb-10 sm:min-h-50 sm:px-5 lg:min-h-61.25 lg:px-16.25">
+                    <div className="grid aspect-3/2 w-full place-items-center">
+                      <LoadingImage
+                        src={processed ? optimizedFernTransformation : fernTransformation}
+                        alt={`${processed ? "Resized and optimized" : "Original"} botanical engraving of a fern unfurling through three stages`}
+                        width={processed ? 768 : 1536}
+                        height={processed ? 512 : 1024}
+                        loading="lazy"
+                        containerClassName={`aspect-3/2 ${processed ? "w-[77%]" : "w-full"}`}
+                        className="block h-auto w-full object-contain mix-blend-multiply"
+                      />
+                    </div>
+                    {processed && (
+                      <span className="absolute right-0 bottom-3 font-mono text-[11px] leading-relaxed text-muted-ink">
+                        QUALITY / 72
+                      </span>
+                    )}
+                  </div>
+                  <figcaption>
+                    <dl className="grid grid-cols-[1.5fr_1fr_1fr] gap-3 border-t border-archive-line pt-4 font-mono">
+                      {[
+                        ["DIMENSIONS", processed ? "768 × 512" : "1536 × 1024"],
+                        ["FORMAT", "JPEG"],
+                        ["FILE SIZE", processed ? "103.2 KB" : "491.3 KB"],
+                      ].map(([label, value]) => (
+                        <div key={label}>
+                          <dt className="mb-1 text-[10px] text-muted-ink">
+                            {label}
+                          </dt>
+                          <dd className="text-[13px]">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </figcaption>
+                </figure>
+              </Reveal>
             ))}
           </div>
           <p className="mt-4.5 text-xs leading-relaxed text-muted-ink">

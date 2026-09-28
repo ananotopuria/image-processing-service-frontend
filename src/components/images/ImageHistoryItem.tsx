@@ -1,6 +1,7 @@
 import { Download, ImageOff, RefreshCw, Trash2 } from "lucide-react";
 import type { ImageMetadata } from "../../api/images.types";
 import { useImageAccess } from "../../hooks/useImageAccess";
+import LoadingImage from "./LoadingImage";
 import { imageDate, imageKindLabel } from "../../utils/imageHistory";
 import { appliedTransformationLabels, calculateSizeReduction, formatFileSize, usableImageUrl } from "../../utils/images";
 
@@ -24,7 +25,7 @@ export default function ImageHistoryItem({ image: initialImage, compact = false,
   return (
     <div className="min-w-0">
       <div className="relative flex aspect-4/3 items-center justify-center overflow-hidden border-b border-archive-line bg-specimen-paper">
-        {canPreview ? <img src={url} alt={`${imageKindLabel(image)}: ${image.originalName}`} loading="lazy" referrerPolicy="no-referrer" onError={failPreview} className="h-full w-full object-contain p-3" /> : (
+        {canPreview ? <LoadingImage src={url} alt={`${imageKindLabel(image)}: ${image.originalName}`} loading="lazy" referrerPolicy="no-referrer" onError={failPreview} containerClassName="h-full w-full" className="h-full w-full object-contain p-3" /> : (
           <div className="flex max-w-xs flex-col items-center gap-3 px-5 py-4 text-center text-xs leading-relaxed text-muted-ink">
             <ImageOff size={24} strokeWidth={1} aria-hidden="true" />
             <p>{expired ? "Refresh this temporary link to see the preview." : "The preview could not be displayed."}</p>

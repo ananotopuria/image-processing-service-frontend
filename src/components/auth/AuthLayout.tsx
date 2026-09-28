@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import specimen from "../../assets/logo1.png";
 import mothLifeStages from "../../assets/moth-life-stages-transparent.png";
+import LoadingImage from "../images/LoadingImage";
 
 type AuthLayoutProps = {
   mode: "login" | "register";
@@ -15,13 +16,14 @@ function TransformationStudy({ className }: { className: string }) {
         <span className="h-px flex-1 bg-archive-line" />
         <span>LEPIDOPTERA</span>
       </div>
-      <img
+      <LoadingImage
         src={mothLifeStages}
         alt="Antique-style sepia engraving showing a spread-wing moth, caterpillar, and chrysalis arranged vertically"
         width={1024}
         height={1536}
         loading="lazy"
-        className="mx-auto my-4 block h-auto w-44 max-w-full object-contain lg:w-52"
+        containerClassName="mx-auto my-4 aspect-2/3 w-44 max-w-full lg:w-52"
+        className="block h-auto w-full object-contain"
       />
       <figcaption className="text-center font-editorial text-xl italic">
         A study in transformation.

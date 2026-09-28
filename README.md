@@ -44,49 +44,17 @@ Swagger configuration, rather than a guarantee of current service availability.
 
 Pricing is a presentation/demo page; billing and subscriptions are not implemented.
 
-## Visual walkthrough
+## Walkthrough
 
-**These are labeled placeholders, not screenshots or mock results.** Replace
-them with captures of the real running app. Use the project-owned
-`src/assets/fern-transformation.jpg` or another image you may publish.
-Capture only the application viewport: omit developer tools, credentials,
-tokens, signed image URLs, and private user images. Leave sign-in fields empty
-and conceal any visible account identity.
-
-### 1. Sign in
-
-![Screenshot placeholder: Mothframe sign-in screen](docs/screenshots/sign-in-placeholder.svg)
-
-Capture `/login` with the specimen illustration, heading, and empty form.
-Save as **`docs/screenshots/sign-in.png`** and update the image link above.
-
-### 2. Upload an original
-
-![Screenshot placeholder: Mothframe upload workspace](docs/screenshots/upload-placeholder.svg)
-
-Capture `/upload` after selecting the safe fern image. Include its preview,
-transformation controls, and Process image action.
-Save as **`docs/screenshots/upload.png`** and update the image link above.
-
-### 3. Select a crop
-
-![Screenshot placeholder: Mothframe visual crop editor](docs/screenshots/crop-placeholder.svg)
-
-On `/upload`, expand Crop, enable it, and draw a rectangle. Include the
-selection and synchronized X, Y, width, and height fields.
-Save as **`docs/screenshots/crop.png`** and update the image link above.
-
-### 4. Review the processed result
-
-![Screenshot placeholder: Mothframe completed transformation](docs/screenshots/processed-result-placeholder.svg)
-
-Submit an actual transformation of the safe image. Capture the success state on
-`/upload`: “A new form, ready,” result preview, real metadata, and download
-action. This is an upload-page state, not a separate route.
-Save as **`docs/screenshots/processed-result.png`** and update the image link above.
-
-A desktop capture around 1440 × 1000 is a useful starting point. An optional
-390-pixel-wide capture can demonstrate the stacked mobile layout.
+1. **Sign in:** Open `/login` and sign in with your demo account, or register a new one.
+2. **Upload an original:** Open `/upload` and select a JPEG, PNG, or WebP image.
+   The project-owned `src/assets/fern-transformation.jpg` is available for a demo.
+3. **Select a crop:** Enable Crop and draw or adjust the selection on the preview.
+   Its coordinates sync with the original-image pixel values sent to the backend.
+4. **Process and review:** Choose transformations and select Process image.
+   The result appears on the upload page with its preview, metadata, and download action.
+5. **Explore the archive:** Open `/images` to browse originals and expand View versions
+   to see their processed images.
 
 ## Tech stack
 
@@ -160,7 +128,7 @@ npm run test:pricing
 ```
 
 Tests use synthetic images, test-only account data, fake timers, and mocked API
-adapters. They do not create live accounts or upload files to S3. Browser screenshots
+adapters. They do not create live accounts or upload files to S3. Browser interaction
 and live backend availability are separate checks.
 
 ## Backend relationship
@@ -226,8 +194,7 @@ lifecycle behavior, and limitations.
 - [ ] Upload the safe fern image, select a crop, and run one transformation.
 - [ ] Confirm the real result preview, metadata, and download action work.
 - [ ] Check the mobile layout and refresh a deep link once.
-- [ ] Close developer tools and remove credentials/private images from captures.
-- [ ] Fill the frontend URL and replace all four screenshot placeholders.
+- [ ] Fill in the frontend URL.
 
 ## Repository map
 
@@ -238,7 +205,7 @@ src/components/auth/     Sign-in and registration UI
 src/components/images/   Upload, crop, comparison, results, and archive components
 src/pages/               Landing page, auth, workspace, dashboard, history
 src/utils/               Crop math, file validation, previews, metadata formatting
-docs/                    Backend contracts and screenshot placeholders
+docs/                    Backend contracts and implementation notes
 tests/                   Auth, image-flow, and routing/interaction checks
 ```
 
