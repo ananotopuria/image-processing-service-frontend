@@ -1,3 +1,4 @@
+import FavoriteButton from "./FavoriteButton";
 import { Download, ImageOff, RefreshCw, Trash2 } from "lucide-react";
 import type { ImageMetadata } from "../../api/images.types";
 import { useImageAccess } from "../../hooks/useImageAccess";
@@ -32,6 +33,7 @@ export default function ImageHistoryItem({ image: initialImage, compact = false,
             <button type="button" disabled={refreshing} onClick={() => { void refresh(); }} className="min-h-11 cursor-pointer px-3 underline disabled:cursor-wait disabled:opacity-50">{refreshing ? "Refreshing…" : "Refresh preview"}</button>
           </div>
         )}
+        {!compact && <FavoriteButton image={initialImage} />}
         <span className="absolute top-3 left-3 rounded-sm border border-archive-line bg-paper px-2.5 py-1 font-mono text-[10px]">{imageKindLabel(image)}</span>
       </div>
       <div className="p-5">
