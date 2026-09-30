@@ -1,5 +1,8 @@
+import { rememberReprocessingScroll } from "../../hooks/useReprocessingScroll";
+import { Link, useLocation } from "react-router-dom";
+import { savedOriginalUrl } from "../../utils/reprocessing";
 import FavoriteButton from "./FavoriteButton";
-import { Download, ImageOff, RefreshCw, Trash2 } from "lucide-react";
+import { Download, ImageOff, RefreshCw, Trash2, WandSparkles } from "lucide-react";
 import type { ImageMetadata } from "../../api/images.types";
 import { useImageAccess } from "../../hooks/useImageAccess";
 import LoadingImage from "./LoadingImage";
@@ -16,6 +19,8 @@ interface ImageHistoryItemProps {
 export default function ImageHistoryItem({ image: initialImage, compact = false, deleteDisabled, onDelete }: ImageHistoryItemProps) {
   const { image, refreshing, error, previewFailed, expired, failPreview, refresh, download } = useImageAccess(initialImage);
   const url = usableImageUrl(image.url);
+  const transformUrl = savedOriginalUrl(image);
+  const location = useLocation();
   const created = imageDate(image.createdAt);
   const expiry = imageDate(image.urlExpiresAt);
   const transformations = appliedTransformationLabels(image.transformations);
@@ -67,6 +72,8 @@ export default function ImageHistoryItem({ image: initialImage, compact = false,
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               <button type="button" disabled={refreshing} onClick={() => { void download(); }} className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-sm bg-ink px-4 py-2 text-xs text-paper hover:bg-ink-hover disabled:cursor-wait disabled:opacity-50"><Download size={14} aria-hidden="true" />{refreshing ? "Getting links…" : "Download"}</button>
               <button type="button" disabled={refreshing} onClick={() => { void refresh(); }} className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs underline disabled:cursor-wait disabled:opacity-50"><RefreshCw size={13} aria-hidden="true" />Refresh links</button>
+              {transformUrl ? <Link to={transformUrl} onClick={(event) => { event.stopPropagation(); rememberReprocessingScroll(location.key); }} className="inline-flex min-h-11 items-center gap-2 text-xs underline focus-visible:outline-2 focus-visible:outline-offset-2"><WandSparkles size={14} aria-hidden="true" />Transform again</Link>
+                : <span className="text-xs leading-relaxed text-muted-ink">Transform again unavailable: no saved original. Upload the original file to create a new version.</span>}
               {onDelete && <button type="button" disabled={deleteDisabled} onClick={() => onDelete(image)} aria-label={`Delete ${imageKindLabel(image).toLowerCase()}: ${image.originalName}`} className="ml-auto inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs underline disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={14} aria-hidden="true" />Delete</button>}
             </div>
           </>

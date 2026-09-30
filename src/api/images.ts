@@ -1,3 +1,4 @@
+import { requireOriginal } from "../utils/reprocessing";
 import { favoriteState } from "../utils/favorites";
 import { getRetryAfterDeadline } from "./imageErrors";
 import { apiClient } from "./client";
@@ -163,4 +164,12 @@ export async function setImageFavorite(imageId: string, isFavorite: boolean, sig
     }
     return { imageId, isFavorite: data.isFavorite };
   });
+}
+
+
+export async function getSavedOriginal(originalId: string, signal: AbortSignal): Promise<ImageMetadata> {
+  if (!/^[a-f\d]{24}$/i.test(originalId)) {
+    throw new ImageInputError("This saved-original link is invalid. Choose an original from Images.");
+  }
+  return requireOriginal(await getImageById(originalId, signal));
 }

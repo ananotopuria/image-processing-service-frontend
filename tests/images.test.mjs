@@ -3,6 +3,7 @@ import { after, beforeEach, test } from "node:test";
 import { AxiosError, AxiosHeaders } from "axios";
 import { createServer } from "vite";
 import { createElement } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const stored = new Map();
@@ -27,6 +28,16 @@ const { getImageErrorMessage } = await vite.ssrLoadModule("/src/api/imageErrors.
 const { default: ProcessingResult } = await vite.ssrLoadModule("/src/components/images/ProcessingResult.tsx");
 const { default: ImageGroupCard } = await vite.ssrLoadModule("/src/components/images/ImageGroupCard.tsx");
 const { default: DeleteImageDialog } = await vite.ssrLoadModule("/src/components/images/DeleteImageDialog.tsx");
+const { createFavoriteState, favoriteState } = await vite.ssrLoadModule("/src/utils/favorites.ts");
+const { toggleFavorite } = await vite.ssrLoadModule("/src/hooks/useFavorites.ts");
+const { getRetryAfterDeadline } = await vite.ssrLoadModule("/src/api/imageErrors.ts");
+const { default: FavoriteButton } = await vite.ssrLoadModule("/src/components/images/FavoriteButton.tsx");
+const reprocessing = await vite.ssrLoadModule("/src/utils/reprocessing.ts");
+const { getSavedOriginal } = await vite.ssrLoadModule("/src/api/images.ts");
+const { processStudioSource } = await vite.ssrLoadModule("/src/api/studio.ts");
+const { loadSavedImagePreview } = await vite.ssrLoadModule("/src/utils/savedImagePreview.ts");
+const { default: Studio } = await vite.ssrLoadModule("/src/pages/Studio.tsx");
+const { default: SavedOriginalPreview } = await vite.ssrLoadModule("/src/components/images/SavedOriginalPreview.tsx");
 
 after(async () => { await vite.close(); delete globalThis.window; });
 beforeEach(() => tokenStorage.clearToken());
@@ -812,12 +823,12 @@ test("list, detail, and delete preserve the global 401 behavior and cancellation
 
 test("gallery renders actual labels, groups and details without exposing S3 keys", () => {
   const group = history.groupImagesByOriginal([version2, processed, original])[0];
-  const markup = renderToStaticMarkup(createElement(ImageGroupCard, { group, deleteDisabled: false, onDelete() {} }));
+  const markup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ImageGroupCard, { group, deleteDisabled: false, onDelete() {} })));
   for (const text of ["Original", "Processed version", "View versions", "(2)", "Image details", "Rotate 90°", "Grayscale", "Quality 90"]) assert.ok(markup.includes(text), text);
   assert.ok(!markup.includes("on this page"));
   assert.doesNotMatch(markup, /originals\/user\/|transformed\/user\//);
   const orphan = history.groupImagesByOriginal([{ ...processed, url: undefined, downloadUrl: undefined, urlExpiresAt: undefined }])[0];
-  const orphanMarkup = renderToStaticMarkup(createElement(ImageGroupCard, { group: orphan, deleteDisabled: false, onDelete() {} }));
+  const orphanMarkup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ImageGroupCard, { group: orphan, deleteDisabled: false, onDelete() {} })));
   assert.match(orphanMarkup, /original is unavailable/);
   assert.match(orphanMarkup, /Refresh preview/);
   assert.doesNotMatch(orphanMarkup, /<img/);
@@ -834,10 +845,6 @@ test("history error messages describe reads/deletes and never expose server inte
   assert.match(getImageErrorMessage(new AxiosError("private", "ERR_NETWORK"), "load"), /network or CORS/);
 });
 
-const { createFavoriteState, favoriteState } = await vite.ssrLoadModule("/src/utils/favorites.ts");
-const { toggleFavorite } = await vite.ssrLoadModule("/src/hooks/useFavorites.ts");
-const { getRetryAfterDeadline } = await vite.ssrLoadModule("/src/api/imageErrors.ts");
-const { default: FavoriteButton } = await vite.ssrLoadModule("/src/components/images/FavoriteButton.tsx");
 
 test("favorites list uses exact pagination, signed metadata and Bearer authorization", async () => {
   tokenStorage.setToken("favorites-token");
@@ -1034,4 +1041,193 @@ test("favorite controls expose state, accessible names and pending disabled stat
   assert.match(render(), /disabled=""/);
   favoriteState.finish(request, true);
   assert.doesNotMatch(render(), /disabled=""/);
+});
+
+const callbacks = { onOriginal() {}, onPhase() {} };
+
+test("Transform again resolves originals, versions and identifiable legacy references without guessing", () => {
+  assert.equal(reprocessing.originalIdForImage(original), original._id);
+  assert.equal(reprocessing.originalIdForImage(processed), original._id);
+  assert.equal(reprocessing.originalIdForImage(legacy), null);
+  assert.equal(reprocessing.originalIdForImage({ ...processed, originalImageId: undefined }), null);
+  assert.equal(reprocessing.originalIdForImage({ ...legacy, originalImageId: original._id }), original._id);
+  assert.equal(reprocessing.originalIdForImage({ ...processed, originalImageId: "invalid" }), null);
+  assert.equal(reprocessing.savedOriginalUrl(processed), `/upload?originalId=${original._id}`);
+  const group = history.groupImagesByOriginal([processed, original])[0];
+  const markup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ImageGroupCard, { group, deleteDisabled: false, onDelete() {} })));
+  assert.equal((markup.match(new RegExp(`href="/upload\\?originalId=${original._id}"`, "g")) ?? []).length, 2);
+  assert.doesNotMatch(markup, new RegExp(`originalId=${processed._id}`));
+  const legacyMarkup = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ImageGroupCard, { group: history.groupImagesByOriginal([legacy])[0], deleteDisabled: false, onDelete() {} })));
+  assert.match(legacyMarkup, /Transform again unavailable: no saved original/);
+  assert.doesNotMatch(legacyMarkup, /originalId=/);
+});
+
+test("saved-original processing fetches metadata then transforms only the original, with no upload or storage download", async () => {
+  const paths = [];
+  tokenStorage.setToken("reprocess-test-token");
+  apiClient.defaults.adapter = async (config) => {
+    assert.equal(config.headers.get("Authorization"), "Bearer reprocess-test-token");
+    paths.push([config.method, config.url]);
+    if (config.method === "get") return response(config, { ...original, isFavorite: true });
+    assert.deepEqual(JSON.parse(config.data), { transformations: { resize: { width: 100 }, format: "webp", quality: 80 } });
+    return response(config, processed);
+  };
+  const saved = await getSavedOriginal(original._id, signal());
+  const body = helpers.buildTransformRequest({ ...helpers.createDefaultSettings(), width: "100" });
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = () => assert.fail("Processing must not download the original");
+  try {
+    const phases = [];
+    const result = await processStudioSource({ kind: "saved", original: saved }, body, signal(), {
+      onOriginal() { assert.fail("Saved originals must not be uploaded"); }, onPhase: (phase) => phases.push(phase),
+    });
+    assert.deepEqual(phases, ["processing"]);
+    assert.deepEqual(paths, [["get", `/api/images/${original._id}`], ["post", `/api/images/${original._id}/transform`]]);
+    assert.equal(result.originalImageId, original._id);
+    assert.equal(result.isFavorite, false);
+    assert.equal(favoriteState.getSnapshot().values.get(original._id).value, true);
+    assert.equal(result.filename, "version.webp");
+    assert.equal(result.format, "webp");
+    assert.equal(result.originalName, "photo.png");
+    assert.equal(history.groupImagesByOriginal([result, saved])[0].versions[0]._id, result._id);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test("new-file workflow uploads once and reuses the saved original after a failed transformation", async () => {
+  const paths = [];
+  let saved;
+  let fail = true;
+  apiClient.defaults.adapter = async (config) => {
+    paths.push(config.url);
+    if (config.url.endsWith("/upload")) {
+      assert.ok(config.data instanceof FormData);
+      return response(config, original);
+    }
+    if (fail) throw httpError(502, config);
+    return response(config, processed);
+  };
+  const body = helpers.buildTransformRequest(helpers.createDefaultSettings());
+  await assert.rejects(processStudioSource({ kind: "file", file: png(), original: null }, body, signal(), { ...callbacks, onOriginal: (image) => { saved = image; } }));
+  assert.equal(saved._id, original._id);
+  fail = false;
+  await processStudioSource({ kind: "file", file: png(), original: saved }, body, signal(), callbacks);
+  assert.deepEqual(paths, ["/api/images/upload", `/api/images/${original._id}/transform`, `/api/images/${original._id}/transform`]);
+});
+
+test("saved links reject malformed IDs, versions and legacy records before processing", async () => {
+  apiClient.defaults.adapter = async () => assert.fail("Invalid original reached transport");
+  for (const id of ["", "invalid", "../upload"]) await assert.rejects(getSavedOriginal(id, signal()), /link is invalid/);
+  const body = helpers.buildTransformRequest(helpers.createDefaultSettings());
+  for (const image of [processed, legacy]) {
+    await assert.rejects(processStudioSource({ kind: "saved", original: image }, body, signal(), callbacks), /not a saved original/);
+    apiClient.defaults.adapter = async (config) => response(config, image);
+    await assert.rejects(getSavedOriginal(image._id, signal()), /not a saved original/);
+    apiClient.defaults.adapter = async () => assert.fail("Invalid original reached transport");
+  }
+});
+
+test("saved originals preserve unavailable, forbidden, expired-session and cancellation behavior", async () => {
+  for (const status of [403, 404, 401, 502]) {
+    tokenStorage.setToken("saved-original-token");
+    apiClient.defaults.adapter = async (config) => { throw httpError(status, config); };
+    await assert.rejects(getSavedOriginal(original._id, signal()), (error) => error.response.status === status);
+    if (status === 401) assert.equal(tokenStorage.getToken(), null);
+    assert.doesNotMatch(getImageErrorMessage(httpError(status), "load"), /password|secret/);
+  }
+  const controller = new AbortController();
+  controller.abort();
+  apiClient.defaults.adapter = async () => assert.fail("Canceled operation reached transport");
+  await assert.rejects(getSavedOriginal(original._id, controller.signal));
+  await assert.rejects(processStudioSource({ kind: "saved", original }, helpers.buildTransformRequest(helpers.createDefaultSettings()), controller.signal, callbacks));
+});
+
+test("direct Studio URLs render saved mode, and switching to upload removes only the source parameter", () => {
+  const renderStudio = (url) => renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: [url] }, createElement(Studio)));
+  for (const url of [`/upload?originalId=${original._id}`, `/upload?originalId=`]) {
+    const markup = renderStudio(url);
+    assert.match(markup, /Editing a saved original/);
+    assert.match(markup, /Loading saved original/);
+    assert.match(markup, /Upload a new image/);
+    assert.doesNotMatch(markup, /type="file"/);
+  }
+  const params = new URLSearchParams(`originalId=${original._id}&source=history`);
+  const next = reprocessing.withoutSavedOriginal(params);
+  assert.equal(next.toString(), "source=history");
+  assert.equal(params.get("originalId"), original._id);
+  const upload = renderStudio(`/upload?${next}`);
+  assert.match(upload, /type="file"/);
+  assert.doesNotMatch(upload, /Editing a saved original/);
+});
+
+test("saved preview shows metadata, unavailable state and manual retry without invented dimensions", () => {
+  const props = { original, preview: null, loading: false, previewLoading: false, error: "", previewError: "Preview unavailable. Retry to enable cropping.", disabled: false, onRetry() {} };
+  const markup = renderToStaticMarkup(createElement(SavedOriginalPreview, props));
+  assert.match(markup, /SAVED ORIGINAL/);
+  assert.match(markup, /photo.png/);
+  assert.match(markup, /Refresh preview/);
+  assert.match(markup, /Retry to enable cropping/);
+  assert.doesNotMatch(markup, /<img/);
+  const unavailable = renderToStaticMarkup(createElement(SavedOriginalPreview, { ...props, original: null, previewError: "", error: "This image is no longer available." }));
+  assert.match(unavailable, /role="alert"/);
+  assert.match(unavailable, /Retry loading original/);
+});
+
+test("saved preview reads signed bytes only for the crop editor without credentials or creating a File", async () => {
+  const oldFetch = globalThis.fetch;
+  const oldImage = globalThis.Image;
+  const oldCreate = URL.createObjectURL;
+  const oldRevoke = URL.revokeObjectURL;
+  const revoked = [];
+  let previewBlob;
+  URL.createObjectURL = (blob) => { previewBlob = blob; return "blob:saved-preview"; };
+  URL.revokeObjectURL = (url) => revoked.push(url);
+  globalThis.Image = class { naturalWidth = 1200; naturalHeight = 800; async decode() {} };
+  const controller = new AbortController();
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, original.url);
+    assert.equal(options.credentials, "omit");
+    assert.equal(options.referrerPolicy, "no-referrer");
+    assert.equal(options.headers, undefined);
+    assert.equal(options.signal, controller.signal);
+    return new Response(pngBytes, { status: 200 });
+  };
+  try {
+    const preview = await loadSavedImagePreview(original, controller.signal);
+    assert.equal(preview.file, undefined);
+    assert.ok(previewBlob instanceof Blob);
+    assert.equal(previewBlob instanceof File, false);
+    assert.deepEqual({ width: preview.width, height: preview.height }, { width: 1200, height: 800 });
+    const settings = { ...helpers.createDefaultSettings(), cropEnabled: true, cropWidth: "100", cropHeight: "100", cropX: "1150", cropY: "0" };
+    assert.throws(() => helpers.buildTransformRequest(settings, preview), /crop must fit/);
+    globalThis.Image = class { naturalWidth = 1200; naturalHeight = 800; async decode() { controller.abort(); } };
+    await assert.rejects(loadSavedImagePreview(original, controller.signal));
+    assert.deepEqual(revoked, ["blob:saved-preview"], "Late decoded previews are disposed after leaving the workspace");
+  } finally {
+    globalThis.fetch = oldFetch;
+    globalThis.Image = oldImage;
+    URL.createObjectURL = oldCreate;
+    URL.revokeObjectURL = oldRevoke;
+  }
+});
+
+test("expired or failed saved previews do not automatically retry signed storage requests", async () => {
+  const oldFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return new Response(null, { status: 403 }); };
+  try {
+    await assert.rejects(loadSavedImagePreview({ ...original, urlExpiresAt: "2020-01-01T00:00:00Z" }, signal()), /expired/);
+    assert.equal(calls, 0);
+    await assert.rejects(loadSavedImagePreview(original, signal()), /could not be loaded/);
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test("result identifies the output filename separately from its original and downloads the actual format", () => {
+  const markup = renderToStaticMarkup(createElement(ProcessingResult, { image: processed, refreshing: false, onRefresh() {}, onReset() {} }));
+  assert.match(markup, /PROCESSED FILE/);
+  assert.match(markup, /version.webp/);
+  assert.match(markup, /Source original: photo.png/);
+  assert.match(markup, /download="version.webp"/);
+  assert.match(markup, /WEBP/);
+  assert.match(markup, /20 × 10 px/);
 });

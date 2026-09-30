@@ -3,12 +3,12 @@ import { ChevronDown, Crop, FlipHorizontal2, FlipVertical2, Maximize, Palette, R
 import type { TransformationSettings } from "../../api/images.types";
 import { isImageFormat } from "../../utils/images";
 import { cropFields, initialCrop, settingsCrop } from "../../utils/crop";
-import type { SelectedImage } from "./ImagePreview";
+import type { EditorImage } from "./ImagePreview";
 import VisualCropEditor from "./VisualCropEditor";
 
 interface TransformationControlsProps {
   settings: TransformationSettings;
-  image: SelectedImage | null;
+  image: EditorImage | null;
   disabled: boolean;
   onChange: (settings: TransformationSettings) => void;
   onReset: () => void;
@@ -71,11 +71,11 @@ export default function TransformationControls({ settings, image, disabled, onCh
       </EditorSection>
 
       <EditorSection title="Crop" icon={<Crop size={17} aria-hidden="true" />} summary={settings.cropEnabled ? "Enabled" : "Off"}>
-        <Toggle label="Enable crop" checked={settings.cropEnabled} disabled={!image} onChange={(cropEnabled) => onChange({
+        <Toggle label="Enable crop" checked={settings.cropEnabled} disabled={!image && !settings.cropEnabled} onChange={(cropEnabled) => onChange({
           ...settings, cropEnabled,
           ...(cropEnabled && image && !settingsCrop(settings, image) ? cropFields(initialCrop(image)) : {}),
         })} />
-        {!image && <p className="text-xs leading-relaxed text-muted-ink">Choose an image to select a crop area.</p>}
+        {!image && <p className="text-xs leading-relaxed text-muted-ink">Load an original preview to select a crop area.</p>}
         {settings.cropEnabled && image && (
           <VisualCropEditor image={image} settings={settings} disabled={disabled} onChange={onChange} />
         )}

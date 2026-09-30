@@ -10,6 +10,7 @@ import Login from "../pages/Login";
 import Register from "../pages/Register";
 import Studio from "../pages/Studio";
 import History from "../pages/History";
+import StudioRedirect from "./StudioRedirect";
 import Dashboard from "../pages/Dashboard";
 
 export const router = createBrowserRouter([
@@ -53,7 +54,7 @@ export const router = createBrowserRouter([
           },
           {
             path: "/studio",
-            element: <Navigate to="/upload" replace />,
+            element: <StudioRedirect />,
           },
           {
             path: "/history",

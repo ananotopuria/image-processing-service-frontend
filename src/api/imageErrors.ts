@@ -29,6 +29,7 @@ export function getImageErrorMessage(error: unknown, operation: "process" | "loa
   }
   const status = error.response.status;
   if (operation !== "process") {
+    if (status === 403) return "This image is not available to your account. Choose another original from Images.";
     if (status === 404) return "This image is no longer available. Refresh the gallery to see the latest records.";
     if (status === 400) return "The image request was not accepted. Refresh the gallery and try again.";
     if (status === 429) return "Too many image requests. Wait a minute before trying again.";
@@ -46,6 +47,7 @@ export function getImageErrorMessage(error: unknown, operation: "process" | "loa
   const messages: Record<number, string> = {
     400: "Check your image and settings. Use dimensions from 1–4000, rotation from −360 to 360°, and quality from 1–100. A crop must fit inside the original image.",
     401: "Your session has expired. Please sign in again.",
+    403: "This original is not available to your account. Choose another original from Images.",
     404: "This image is no longer available to your account. Choose the original file again.",
     409: "The saved original is unavailable. Choose the original file again.",
     413: "Choose an image smaller than 5 MiB (5,242,880 bytes).",

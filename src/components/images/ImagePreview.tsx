@@ -1,12 +1,15 @@
 import { formatFileSize } from "../../utils/images";
 import LoadingImage from "./LoadingImage";
 
-export interface SelectedImage {
-  file: File;
+export interface EditorImage {
   url: string;
-  mimeType: string;
   width: number;
   height: number;
+}
+
+export interface SelectedImage extends EditorImage {
+  file: File;
+  mimeType: string;
 }
 
 export default function ImagePreview({ image }: { image: SelectedImage }) {
