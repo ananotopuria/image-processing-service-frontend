@@ -207,6 +207,32 @@ applied result. False flags and zero rotation receive no active badge. Historica
 records without `transformations` retain the metadata/result view without
 inventing an operation history.
 
+## Display and download filenames
+
+`src/utils/imageFilename.ts` derives user-facing names from each returned record.
+Originals retain `originalName` exactly. Transformed versions preserve its basename
+and replace only the last extension with the actual `format` (`jpeg` → `.jpg`,
+`png` → `.png`, `webp` → `.webp`). Uppercase source extensions, multiple dots, and
+extensionless names are supported. Legacy names remain unchanged because their
+original/version identity is unavailable. Studio's source-original label still
+shows the unchanged original name. Cards, version lists, results, accessible
+labels, delete dialogs, and download hints share this helper.
+
+The local backend filename fix mirrors this rule in `images/image-filename.ts`.
+`ImagesService.withAccessUrls` passes the derived name to `S3Service.getFileUrls`,
+which signs `ResponseContentDisposition` as `attachment` with an ASCII `filename`
+fallback and UTF-8 `filename*`. Thus a JPEG original named `photo.jpg` keeps that
+name and its WebP version requests `photo.webp`. This applies to newly generated
+links for existing records as well as new results, without changing `originalName`,
+generated `filename`, S3 keys, records, or transformations.
+
+Cross-origin S3 downloads use this server-provided header; the anchor's `download`
+attribute is only a hint. Do not edit presigned query parameters in the frontend:
+that would invalidate the signature. The backend change must be deployed and
+links refreshed for the new names to take effect. Automated checks cover rendered
+names, real JPEG-to-WebP encoding, and signed attachment overrides; they do not
+verify a live browser download from S3.
+
 ## Preview and download
 
 - `url` is an HTTPS presigned S3 GET URL with inline content disposition.
@@ -247,27 +273,42 @@ logical groups. Counts and records are queried separately, so concurrent writes
 can briefly make them inconsistent. The frontend validates the envelope, IDs,
 metadata, and pagination without assuming every group fits on a page.
 
-`/images` collects all archive metadata in API batches of 50, then groups records
-before paginating. Each UI page has up to **10 complete image groups/cards**;
-only the last page can have fewer. The footer's page count and visible range use
-group totals. The header distinguishes image groups from saved record counts.
-Previous/Next slice this complete collection locally, so API page boundaries
-cannot separate versions from their original. Groups follow newest activity.
+The All Images view requests page 1 with `limit=10`, then appends the next server
+page when an IntersectionObserver sentinel comes within 240px below the viewport.
+There is no whole-archive prefetch or local group pagination. Each batch contains
+up to **10 records**, counting originals, transformed versions, and legacy images;
+it can create fewer than 10 cards. The header distinguishes loaded records from
+API `total` and separately reports the number of currently visible groups.
+Loading stops when the returned `page >= totalPages` or the page is empty.
 
-Manual Refresh, Retry, and deletion reload the archive. There is no polling.
-Initial loading uses skeleton cards; refresh preserves the last complete archive
-with an updating message. Failed refreshes mark it stale and disable navigation
-and deletion until reloaded. Failed later batches never publish partial groups;
-changed totals, duplicate IDs across batches, or incomplete batches require Retry.
-The API has no atomic snapshot, so simultaneous changes cannot be fully excluded.
-Aborted/stale responses cannot replace the collection. Deleting the last group on
-a page clamps navigation to the last remaining page. Empty archives show an
-Upload image link.
+Records are deduplicated by `_id` and grouped after each batch. A later original
+or version joins the existing group by ID without moving its position. Groups
+may be incomplete until loading finishes; labels say that an original or versions
+may still load, and disclosure counts reflect only loaded versions. There is no
+endpoint for retrieving a complete version family independently.
 
-This frontend-only fix fetches metadata for the whole archive, which suits the
-portfolio demo but increases initial load time and memory for large collections.
-A backend endpoint that paginates originals with complete versions would be the
-scalable replacement; the existing raw-record API and dashboard remain unchanged.
+Initial loading retains the existing skeleton cards. Subsequent requests keep
+loaded cards visible with a small footer spinner. A later error preserves those
+cards and displays an inline Retry button; observer callbacks cannot retry until
+the user chooses Retry. Initial failures also require manual retry. Empty archives
+retain the upload prompt; nonempty completed lists show a subtle end message.
+Favorites keeps its original numbered-page workflow, and Dashboard is unchanged.
+
+The loader follows the existing Axios, AbortController, and in-memory store
+patterns, with one request at a time and a generation guard against stale results.
+Deferred initial requests tolerate React Strict Mode setup/cleanup/setup without
+duplicating transport. Observer cleanup ignores queued callbacks. Collection
+changes and Refresh reset records and offsets; the hook's query key also scopes
+any future server-supported filters/sort (currently the API exposes neither).
+
+Deletion pauses/aborts pending batches before the mutation, then resets to page 1
+after either success or an unconfirmed/partial failure. It never continues using
+pre-deletion offsets, which could skip survivors after an original/version cascade.
+A changed API total during scrolling preserves the loaded list but requires a
+manual Retry from page 1. The API has no atomic snapshot; concurrent external
+writes that leave the count unchanged cannot be fully detected. No backend change
+is required for infinite scrolling. Existing records and transformation behavior
+are unchanged.
 
 `groupImagesByOriginal()` creates groups without mutating API data:
 
@@ -282,8 +323,8 @@ scalable replacement; the existing raw-record API and dashboard remain unchanged
   Legacy records with no `kind` are labeled Legacy image and are not assigned
   invented original/version relationships.
 
-Original cards emphasize the original and offer **View versions (N)** for all
-its versions. Groups lacking their original emphasize the first version and
+Original cards emphasize the original and offer **View versions (N)** for loaded
+versions, with more added as scrolling continues. Groups lacking their original emphasize the first version and
 can expand the rest. Native disclosure controls support keyboard expansion.
 Per-record details show available sizes, dimensions, quality, creation time,
 expiry, and actual applied transformations. Missing original dimensions or
@@ -419,8 +460,9 @@ operation alone, the full combined recipe, inactive/empty omission, crop and
 rotation boundaries, independent/reset defaults, optional output, unchanged crop
 coordinates after resizing, safe crop errors, and backend-sourced applied metadata.
 History coverage adds pagination/query contracts, originals/versions/legacy
-grouping, orphan versions, complete groups across API page boundaries, group page
-counts and ranges, deletion page clamping, interrupted/failed archive loads,
+grouping, orphan versions, incremental family merging across API page boundaries,
+loaded/total record counts, deletion offset resets, interrupted/failed batch loads,
+Strict Mode setup/cleanup, duplicate requests/records, manual retry, stale responses,
 immutable ordering, missing/expired URLs,
 single-record refresh, confirmation semantics, deletion response failures,
 server page correction, safe read/delete errors, and existing 401/cancellation

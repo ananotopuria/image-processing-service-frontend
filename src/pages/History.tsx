@@ -1,3 +1,4 @@
+import InfiniteImageLoader from "../components/images/InfiniteImageLoader";
 import { useRestoreReprocessingScroll } from "../hooks/useReprocessingScroll";
 import { tokenStorage } from "../auth/tokenStorage";
 import { useFavoriteImages } from "../hooks/useFavoriteImages";
@@ -26,7 +27,7 @@ function ImageArchive() {
   const favorites = useFavoriteImages(view === "favorites");
   const favoriteState = useFavorites();
   const active = view === "all" ? all : favorites;
-  const { loading, error, setPage } = active;
+  const { loading, error } = active;
   const data = active.data;
   useRestoreReprocessingScroll(Boolean(data) && !loading);
   const refresh = () => { all.refresh(); favorites.refresh(); };
@@ -44,6 +45,7 @@ function ImageArchive() {
     if (!selected || deletion.current) return;
     const controller = new AbortController();
     deletion.current = controller;
+    all.pause();
     setDeleting(true);
     setDeleteError(null);
     try {
@@ -51,12 +53,11 @@ function ImageArchive() {
       if (controller.signal.aborted) return;
       setSelected(null);
       setNotice(selected.kind === "original" ? "Original and its transformed versions deleted." : "Image deleted.");
-      refresh();
     } catch (error: unknown) {
       if (!controller.signal.aborted) setDeleteError(getImageErrorMessage(error, "delete"));
     } finally {
       if (deletion.current === controller) deletion.current = null;
-      if (!controller.signal.aborted) setDeleting(false);
+      if (!controller.signal.aborted) { setDeleting(false); refresh(); }
     }
   }
 
@@ -72,13 +73,13 @@ function ImageArchive() {
       </div>
       <div role="group" aria-label="Image collection" className="mt-7 flex gap-2">
         {(["all", "favorites"] as const).map((nextView) => <button key={nextView} type="button" aria-pressed={view === nextView}
-          onClick={() => { if (view !== nextView) { all.setPage(1); favorites.setPage(1); refresh(); setView(nextView); setNotice(""); } }}
+          onClick={() => { if (view !== nextView) { all.pause(); favorites.setPage(1); favorites.refresh(); setView(nextView); setNotice(""); } }}
           className={`min-h-11 cursor-pointer rounded-sm border border-archive-line px-5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 ${view === nextView ? "bg-ink text-paper" : "bg-paper text-ink hover:bg-specimen-paper"}`}>
           {nextView === "all" ? "All images" : "Favorites"}
         </button>)}
       </div>
       <div className="my-7 flex flex-wrap items-center justify-between gap-3 border-y border-archive-line py-3">
-        <p className="text-sm text-muted-ink">{showingFavorites ? (data ? `${data.total} favorite ${data.total === 1 ? "image" : "images"}` : "Your favorite images") : (all.data ? `${all.data.total} image ${all.data.total === 1 ? "group" : "groups"} · ${all.data.recordCount} saved ${all.data.recordCount === 1 ? "record" : "records"}` : "Your saved originals and versions")}</p>
+        <p className="text-sm text-muted-ink">{showingFavorites ? (data ? `${data.total} favorite ${data.total === 1 ? "image" : "images"}` : "Your favorite images") : (all.data ? `${all.data.recordCount} of ${all.data.total} saved images loaded · ${groups.length} ${groups.length === 1 ? "group" : "groups"} shown` : "Your saved originals and versions")}</p>
         <button type="button" disabled={loading || deleting || (showingFavorites && favoriteState.rateLimited)} onClick={() => { setNotice(""); refresh(); }} className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm underline disabled:cursor-wait disabled:opacity-50"><RefreshCw size={15} aria-hidden="true" className={loading ? "animate-spin motion-reduce:animate-none" : ""} />{loading ? "Refreshing…" : "Refresh"}</button>
       </div>
       <div role="status" aria-atomic="true" className="mb-4 text-sm text-muted-ink">{notice}{favoriteState.pending ? " Saving favorites…" : ""}{loading && data ? " Updating your images…" : ""}</div>
@@ -87,7 +88,7 @@ function ImageArchive() {
       {error && <div role="alert" className="mb-6 border-l-2 border-ink bg-specimen-paper p-5">
         <p className="text-sm leading-relaxed">{error}</p>
         {data && <p className="mt-2 text-xs text-muted-ink">Showing the last loaded page. It may no longer be current.</p>}
-        <button type="button" onClick={refresh} disabled={showingFavorites && favoriteState.rateLimited} className="disabled:opacity-50 mt-2 min-h-11 cursor-pointer text-sm underline">Retry</button>
+        <button type="button" onClick={showingFavorites ? refresh : all.retry} disabled={showingFavorites && favoriteState.rateLimited} className="disabled:opacity-50 mt-2 min-h-11 cursor-pointer text-sm underline">Retry</button>
       </div>}
       {!data && loading && <GalleryLoading />}
       {data && data.items.length === 0 && !loading && !error && !favoriteState.pending && <div className="border border-dashed border-specimen-line bg-specimen-paper px-6 py-14 text-center">
@@ -97,20 +98,22 @@ function ImageArchive() {
         {!showingFavorites && <Link to="/upload" className="mt-6 inline-flex min-h-12 items-center gap-4 rounded-sm bg-ink px-5 text-sm text-paper hover:bg-ink-hover">Upload image <ArrowRight size={16} aria-hidden="true" /></Link>}
       </div>}
       {data && data.items.length > 0 && <>
-        {!showingFavorites && <p className="mb-5 text-xs leading-relaxed text-muted-ink">One card per original, with all its versions together. Newest activity first. Legacy images and versions without an available original remain visible as separate groups.</p>}
+        {!showingFavorites && <p className="mb-5 text-xs leading-relaxed text-muted-ink">One card per original, newest activity first. Versions join their original as more images load. Legacy images remain visible as separate groups.</p>}
         <div aria-busy={loading} className="grid items-start gap-6 md:grid-cols-2">
           {showingFavorites ? favorites.data?.items.map((image) => <article key={`${image._id}:${image.urlExpiresAt}`} className="min-w-0 overflow-hidden rounded-sm border border-archive-line bg-paper">
             <ImageHistoryItem image={image} deleteDisabled={loading || deleting || Boolean(error)} onDelete={(image) => { setSelected(image); setDeleteError(null); setNotice(""); }} />
-          </article>) : groups.map((group) => <ImageGroupCard key={group.key} group={group} deleteDisabled={loading || deleting || Boolean(error)} onDelete={(image) => { setSelected(image); setDeleteError(null); setNotice(""); }} />)}
+          </article>) : groups.map((group) => <ImageGroupCard key={group.key} group={group} incomplete={all.hasMore} deleteDisabled={loading || deleting || Boolean(error)} onDelete={(image) => { setSelected(image); setDeleteError(null); setNotice(""); }} />)}
         </div>
       </>}
-      {data && data.totalPages > 0 && <nav aria-label="Image history pages" className="mt-8 flex flex-wrap items-center justify-between gap-4 border-t border-archive-line pt-6">
-        <button type="button" disabled={loading || deleting || Boolean(error) || (showingFavorites && (favoriteState.rateLimited || favoriteState.pending > 0)) || data.page <= 1} onClick={() => { setNotice(""); setPage(data.page - 1); }} className="min-h-11 cursor-pointer rounded-sm border border-specimen-line px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40">Previous</button>
-        <p className="text-center text-sm" aria-current="page">Page {data.page} of {data.totalPages}
-          <span className="block text-xs leading-relaxed text-muted-ink">Showing {showingFavorites ? (data.page - 1) * data.limit + 1 : all.data?.from}–{showingFavorites ? Math.min(data.page * data.limit, data.total) : all.data?.to} of {data.total} {showingFavorites ? "favorite images" : "image groups"}</span>
-          <span className="block text-xs leading-relaxed text-muted-ink">Up to {data.limit} cards per page</span>
+      {!showingFavorites && all.data && all.data.recordCount > 0 && <InfiniteImageLoader hasMore={all.hasMore} loading={all.loadingMore} error={all.loadMoreError}
+        disabled={deleting || Boolean(selected)} onLoadMore={all.loadMore} onRetry={all.retry} />}
+      {showingFavorites && favorites.data && favorites.data.totalPages > 0 && <nav aria-label="Image history pages" className="mt-8 flex flex-wrap items-center justify-between gap-4 border-t border-archive-line pt-6">
+        <button type="button" disabled={loading || deleting || Boolean(error) || favoriteState.rateLimited || favoriteState.pending > 0 || favorites.data.page <= 1} onClick={() => { setNotice(""); favorites.setPage(favorites.data!.page - 1); }} className="min-h-11 cursor-pointer rounded-sm border border-specimen-line px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40">Previous</button>
+        <p className="text-center text-sm" aria-current="page">Page {favorites.data.page} of {favorites.data.totalPages}
+          <span className="block text-xs leading-relaxed text-muted-ink">Showing {(favorites.data.page - 1) * favorites.data.limit + 1}–{Math.min(favorites.data.page * favorites.data.limit, favorites.data.total)} of {favorites.data.total} favorite images</span>
+          <span className="block text-xs leading-relaxed text-muted-ink">Up to {favorites.data.limit} cards per page</span>
         </p>
-        <button type="button" disabled={loading || deleting || Boolean(error) || (showingFavorites && (favoriteState.rateLimited || favoriteState.pending > 0)) || data.page >= data.totalPages} onClick={() => { setNotice(""); setPage(data.page + 1); }} className="min-h-11 cursor-pointer rounded-sm border border-specimen-line px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40">Next</button>
+        <button type="button" disabled={loading || deleting || Boolean(error) || favoriteState.rateLimited || favoriteState.pending > 0 || favorites.data.page >= favorites.data.totalPages} onClick={() => { setNotice(""); favorites.setPage(favorites.data!.page + 1); }} className="min-h-11 cursor-pointer rounded-sm border border-specimen-line px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40">Next</button>
       </nav>}
       {selected && <DeleteImageDialog image={selected} pending={deleting} error={deleteError} onCancel={() => { if (!deletion.current) setSelected(null); }} onConfirm={() => { void confirmDelete(); }} onRefresh={() => { setSelected(null); setNotice(""); refresh(); }} />}
     </section>

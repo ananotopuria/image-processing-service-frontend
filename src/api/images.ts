@@ -103,35 +103,6 @@ function invalidHistoryResponse() {
   return new ImageInputError("The server returned incomplete image history. Please refresh the gallery.");
 }
 
-// The API paginates records, not original/version groups. Collect the complete
-// metadata set before grouping so a server page boundary cannot split a card.
-export async function getImageArchive(signal: AbortSignal): Promise<ImageMetadata[]> {
-  const limit = 50;
-  const first = await getImages(1, limit, signal);
-  const items: ImageMetadata[] = [];
-  const seen = new Set<string>();
-  if (first.totalPages > 100000) {
-    throw new ImageInputError("This archive exceeds the service's pagination range.");
-  }
-  function append(result: PaginatedImagesResponse) {
-    const expected = Math.min(limit, Math.max(0, first.total - (result.page - 1) * limit));
-    if (result.total !== first.total || result.items.length !== expected || result.items.some((image) => seen.has(image._id))) {
-      throw new ImageInputError("Your archive changed while loading. Retry to load complete image groups.");
-    }
-    for (const image of result.items) {
-      seen.add(image._id);
-      items.push(image);
-    }
-  }
-  append(first);
-  for (let page = 2; page <= first.totalPages; page++) {
-    signal.throwIfAborted();
-    append(await getImages(page, limit, signal));
-  }
-  signal.throwIfAborted();
-  return items;
-}
-
 export async function deleteImage(imageId: string, signal: AbortSignal): Promise<void> {
   const { data } = await apiClient.delete<unknown>(`/api/images/${encodeURIComponent(imageId)}`, { signal });
   if (!data || typeof data !== "object" || !("message" in data) || data.message !== "Image deleted successfully") {

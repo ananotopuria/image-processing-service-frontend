@@ -1,3 +1,4 @@
+import { imageFilename } from "../../utils/imageFilename";
 import { useEffect, useRef } from "react";
 import type { ImageMetadata } from "../../api/images.types";
 import { imageDeleteMessage } from "../../utils/imageHistory";
@@ -23,7 +24,7 @@ export default function DeleteImageDialog({ image, pending, error, onCancel, onC
     <dialog ref={dialog} aria-labelledby="delete-image-title" aria-describedby="delete-image-description" onCancel={(event) => { event.preventDefault(); if (!pending) onCancel(); }} className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-3rem)] max-w-lg overflow-y-auto rounded-sm border border-archive-line bg-paper p-6 text-ink shadow-xl backdrop:bg-ink/60 sm:p-8">
       <p className="font-mono text-[11px] text-muted-ink">MOTHFRAME / REMOVE FROM ARCHIVE</p>
       <h2 id="delete-image-title" className="mt-4 font-editorial text-3xl">{image.kind === "original" ? "Delete original and all versions?" : "Delete this image?"}</h2>
-      <p className="mt-4 wrap-anywhere text-sm font-semibold">{image.originalName}</p>
+      <p className="mt-4 wrap-anywhere text-sm font-semibold">{imageFilename(image)}</p>
       <p id="delete-image-description" className="mt-3 text-sm leading-relaxed text-muted-ink">{imageDeleteMessage(image)}</p>
       <div role="alert">{error && <p className="mt-5 border-l-2 border-ink bg-specimen-paper p-3 text-sm leading-relaxed">{error}</p>}</div>
       <div className="mt-6 flex flex-wrap gap-3">

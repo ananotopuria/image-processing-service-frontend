@@ -1,3 +1,4 @@
+import { imageFilename } from "../utils/imageFilename";
 import { useEffect, useRef, useState } from "react";
 import { refreshImageLinks } from "../api/images";
 import { getImageErrorMessage } from "../api/imageErrors";
@@ -54,12 +55,14 @@ export function useImageAccess(initialImage: ImageMetadata) {
       setError("A working download link is not available. Refresh the image links and try again.");
       return;
     }
-    // S3's signed response sets Content-Disposition: attachment. Same-tab navigation
+    // S3 must sign Content-Disposition with the same filename: cross-origin
+    // downloads do not reliably honor the anchor's download attribute.
+    // The signed response sets Content-Disposition: attachment. Same-tab navigation
     // avoids popup blockers after an asynchronous refresh; no API token goes to S3.
     const link = document.createElement("a");
     link.href = url;
     link.rel = "noreferrer";
-    link.download = current.filename;
+    link.download = imageFilename(current);
     document.body.append(link);
     link.click();
     link.remove();

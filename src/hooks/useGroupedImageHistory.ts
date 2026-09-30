@@ -1,45 +1,33 @@
-import { favoriteState } from "../utils/favorites";
-import { useEffect, useState } from "react";
-import { getImageArchive } from "../api/images";
-import { getImageErrorMessage } from "../api/imageErrors";
-import { groupImagesByOriginal, paginateImageGroups, type ImageGroup } from "../utils/imageHistory";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { createInfiniteImageHistory } from "../utils/infiniteImageHistory";
+import { groupImagesByOriginal } from "../utils/imageHistory";
 
-interface ArchiveResult {
-  revision: number;
-  groups: ImageGroup[] | null;
-  recordCount: number;
-  error: string | null;
-}
-
-export function useGroupedImageHistory(enabled = true) {
-  const [page, setPage] = useState(1);
-  const [revision, setRevision] = useState(0);
-  const [result, setResult] = useState<ArchiveResult | null>(null);
-
+// Include any future server-supported filters/sort in queryKey. A different key
+// gets an empty store immediately; cleanup aborts the old collection's requests.
+export function useGroupedImageHistory(enabled = true, queryKey = "all:newest") {
+  const store = useMemo(() => {
+    // The key scopes the store even though this endpoint currently has no filters.
+    void queryKey;
+    void enabled;
+    return createInfiniteImageHistory();
+  }, [queryKey, enabled]);
+  const result = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   useEffect(() => {
     if (!enabled) return;
-    const ticket = favoriteState.read();
-    const controller = new AbortController();
-    getImageArchive(controller.signal).then((records) => {
-      if (controller.signal.aborted || !favoriteState.current(ticket)) return;
-      const groups = groupImagesByOriginal(records);
-      setPage((current) => paginateImageGroups(groups, current).page);
-      setResult({ revision, groups, recordCount: records.length, error: null });
-    }).catch((error: unknown) => {
-      if (!controller.signal.aborted && favoriteState.current(ticket)) {
-        // Never publish partially collected groups. Keep the last complete archive.
-        setResult((previous) => ({ revision, groups: previous?.groups ?? null,
-          recordCount: previous?.recordCount ?? 0, error: getImageErrorMessage(error, "load") }));
-      }
-    });
-    return () => controller.abort();
-  }, [revision, enabled]);
-
+    store.start();
+    return () => store.stop();
+  }, [store, enabled]);
+  const groups = useMemo(() => groupImagesByOriginal(result.records), [result.records]);
   return {
-    data: result?.groups ? { ...paginateImageGroups(result.groups, page), recordCount: result.recordCount } : null,
-    loading: enabled && result?.revision !== revision,
-    error: result?.revision === revision ? result.error : null,
-    setPage,
-    refresh: () => setRevision((current) => current + 1),
+    data: enabled && result.total !== null ? { items: groups, total: result.total, recordCount: result.records.length } : null,
+    loading: enabled && result.loading && result.total === null,
+    loadingMore: enabled && result.loading && result.total !== null,
+    error: result.total === null ? result.error : null,
+    loadMoreError: result.total !== null ? result.error : null,
+    hasMore: result.hasMore,
+    loadMore: store.loadMore,
+    retry: store.retry,
+    refresh: store.refresh,
+    pause: store.pause,
   };
 }

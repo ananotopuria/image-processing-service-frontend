@@ -18,9 +18,12 @@ globalThis.window = {
 process.env.VITE_API_URL = "https://api.example.test";
 const vite = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "error" });
 const helpers = await vite.ssrLoadModule("/src/utils/images.ts");
+const { imageFilename } = await vite.ssrLoadModule("/src/utils/imageFilename.ts");
 const cropHelpers = await vite.ssrLoadModule("/src/utils/crop.ts");
 const { imagePreviewSource } = await vite.ssrLoadModule("/src/utils/imagePreviewSource.ts");
-const { createUploadFormData, uploadImage, transformImage, refreshImageLinks, getImageById, getImages, getImageArchive, deleteImage, getFavoriteImages, setImageFavorite } = await vite.ssrLoadModule("/src/api/images.ts");
+const { createUploadFormData, uploadImage, transformImage, refreshImageLinks, getImageById, getImages, deleteImage, getFavoriteImages, setImageFavorite } = await vite.ssrLoadModule("/src/api/images.ts");
+const { createInfiniteImageHistory } = await vite.ssrLoadModule("/src/utils/infiniteImageHistory.ts");
+const { default: InfiniteImageLoader } = await vite.ssrLoadModule("/src/components/images/InfiniteImageLoader.tsx");
 const history = await vite.ssrLoadModule("/src/utils/imageHistory.ts");
 const { apiClient } = await vite.ssrLoadModule("/src/api/client.ts");
 const { tokenStorage } = await vite.ssrLoadModule("/src/auth/tokenStorage.ts");
@@ -560,90 +563,221 @@ function serveArchive(records, requests = []) {
   };
 }
 
-test("ten raw records for five originals produce five cards on one group page", async () => {
-  const { records } = archiveFixture(5, () => 1);
-  serveArchive(records);
-  const groups = history.groupImagesByOriginal(await getImageArchive(signal()));
-  const page = history.paginateImageGroups(groups);
-  assert.equal(records.length, 10);
-  assert.equal(page.items.length, 5);
-  assert.equal(page.total, 5);
-  assert.equal(page.totalPages, 1);
-  assert.equal(page.from, 1);
-  assert.equal(page.to, 5);
-  assert.ok(page.items.every((group) => group.original && group.versions.length === 1));
-});
+// Flush the deferred start and the mocked transport's promise chain.
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
-test("group pagination keeps complete families across API boundaries and Next/Previous", async () => {
-  const { records, originals } = archiveFixture(23, (index) => index % 5 + 1);
+test("infinite history initially requests only 10 records and merges families across batches", async () => {
+  const { records, originals } = archiveFixture(7, () => 2);
   const requests = [];
   serveArchive(records, requests);
-  const groups = history.groupImagesByOriginal(await getImageArchive(signal()));
-  assert.deepEqual(requests, [{ page: 1, limit: 50 }, { page: 2, limit: 50 }]);
+  const store = createInfiniteImageHistory();
+  store.start();
+  await settle();
+  assert.deepEqual(requests, [{ page: 1, limit: 10 }]);
+  assert.equal(store.getSnapshot().records.length, 10);
+  assert.equal(store.getSnapshot().total, 21);
+  assert.equal(store.getSnapshot().hasMore, true);
+  const firstKey = history.groupImagesByOriginal(store.getSnapshot().records)[0].key;
+  await store.loadMore();
+  assert.equal(store.getSnapshot().records.length, 20);
+  await store.loadMore();
+  assert.equal(store.getSnapshot().records.length, 21);
+  assert.equal(store.getSnapshot().hasMore, false);
+  const groups = history.groupImagesByOriginal(store.getSnapshot().records);
+  assert.equal(groups[0].key, firstKey);
   assert.equal(groups.length, originals.length);
-  const pages = [1, 2, 3].map((page) => history.paginateImageGroups(groups, page));
-  assert.deepEqual(pages.map((page) => page.items.length), [10, 10, 3]);
-  assert.deepEqual(pages.map((page) => [page.from, page.to]), [[1, 10], [11, 20], [21, 23]]);
-  assert.ok(pages.every((page) => page.total === 23 && page.totalPages === 3));
-  assert.equal(new Set(pages.flatMap((page) => page.items.map((group) => group.key))).size, 23);
-  for (const [index, group] of pages.flatMap((page) => page.items).entries()) {
-    assert.equal(group.original._id, originals[index]._id);
-    assert.equal(group.versions.length, index % 5 + 1);
-    assert.ok(group.versions.every((version) => version.originalImageId === group.original._id));
-  }
-  assert.deepEqual(history.paginateImageGroups(groups, pages[1].page - 1), pages[0]);
-  assert.equal(requests.length, 2, "Navigation uses the complete archive without refetching raw pages");
+  assert.ok(groups.every((group) => group.original && group.versions.length === 2));
+  await store.loadMore();
+  assert.deepEqual(requests, [1, 2, 3].map((page) => ({ page, limit: 10 })));
+  store.stop();
 });
 
-test("empty archives, legacy records, orphans and deletion use honest group totals", async () => {
-  serveArchive([]);
-  assert.deepEqual(await getImageArchive(signal()), []);
-  assert.deepEqual(history.paginateImageGroups([]), { items: [], page: 1, limit: 10, total: 0, totalPages: 0, from: 0, to: 0 });
-  const groups = history.groupImagesByOriginal([processed, version2, legacy]);
-  assert.equal(history.paginateImageGroups(groups).total, 2);
-  const { records } = archiveFixture(11, () => 2);
-  const before = history.groupImagesByOriginal(records);
-  assert.equal(history.paginateImageGroups(before, 2).items.length, 1);
-  const after = before.slice(0, 10);
-  const page = history.paginateImageGroups(after, 2);
-  assert.equal(page.page, 1, "Deleting the last card on page two returns to page one");
-  assert.equal(page.items.length, 10);
-});
-
-test("a failed later API page cannot return a partial archive; manual retry reloads it", async () => {
-  const { records } = archiveFixture(20, () => 2);
-  apiClient.defaults.adapter = async (config) => {
-    if (config.params.page === 2) throw httpError(503, config);
-    return response(config, pageResponse(records.slice(0, 50), 1, 50, records.length));
-  };
-  await assert.rejects(getImageArchive(signal()), (error) => error.response.status === 503);
-  serveArchive(records);
-  assert.deepEqual(await getImageArchive(signal()), records);
-});
-
-test("archive collection rejects count changes, duplicate offsets and incomplete pages", async () => {
-  const { records } = archiveFixture(20, () => 2);
-  for (const scenario of ["count", "duplicate", "short"]) {
-    apiClient.defaults.adapter = async (config) => {
-      if (config.params.page === 1) return response(config, pageResponse(records.slice(0, 50), 1, 50, records.length));
-      const items = scenario === "duplicate" ? [records[0], ...records.slice(51)] : scenario === "short" ? records.slice(51) : records.slice(50);
-      return response(config, pageResponse(items, 2, 50, records.length + (scenario === "count" ? 1 : 0)));
-    };
-    await assert.rejects(getImageArchive(signal()), /archive changed while loading/);
+test("empty, short-final, and exact-full final pages stop at API totalPages", async () => {
+  for (const count of [0, 3, 10, 20]) {
+    const { records } = archiveFixture(count, () => 0);
+    const requests = [];
+    serveArchive(records, requests);
+    const store = createInfiniteImageHistory();
+    store.start();
+    await settle();
+    if (count > 10) await store.loadMore();
+    assert.equal(store.getSnapshot().hasMore, false);
+    assert.equal(store.getSnapshot().records.length, count);
+    await store.loadMore();
+    assert.equal(requests.length, Math.max(1, Math.ceil(count / 10)));
+    store.stop();
   }
 });
 
-test("cancelling archive loading stops later page requests", async () => {
-  const controller = new AbortController();
-  const { records } = archiveFixture(20, () => 2);
+test("observer bursts issue one request and duplicate IDs never append twice", async () => {
+  const { records } = archiveFixture(20, () => 0);
+  const next = deferred();
+  const requests = [];
+  const store = createInfiniteImageHistory(async (page, limit) => {
+    requests.push({ page, limit });
+    if (page === 1) return pageResponse(records.slice(0, 10), page, limit, 20);
+    return next.promise;
+  });
+  store.start();
+  await settle();
+  const loading = store.loadMore();
+  await Promise.all([store.loadMore(), store.loadMore(), store.loadMore()]);
+  assert.equal(requests.length, 2);
+  assert.equal(store.getSnapshot().loading, true);
+  assert.equal(store.getSnapshot().records.length, 10);
+  next.resolve(pageResponse([records[9], ...records.slice(10, 19)], 2, 10, 20));
+  await loading;
+  assert.equal(store.getSnapshot().records.length, 19);
+  assert.equal(new Set(store.getSnapshot().records.map((image) => image._id)).size, 19);
+  store.stop();
+});
+
+test("later errors retain records and only a manual retry requests the same failed page", async () => {
+  const { records } = archiveFixture(15, () => 0);
+  const requests = [];
+  let fail = true;
+  const store = createInfiniteImageHistory(async (page, limit) => {
+    requests.push(page);
+    if (page === 2 && fail) throw httpError(503);
+    return pageResponse(records.slice((page - 1) * limit, page * limit), page, limit, records.length);
+  });
+  store.start();
+  await settle();
+  await store.loadMore();
+  assert.equal(store.getSnapshot().records.length, 10);
+  assert.equal(store.getSnapshot().page, 1);
+  assert.match(store.getSnapshot().error, /unavailable/);
+  await store.loadMore();
+  await store.loadMore();
+  assert.deepEqual(requests, [1, 2]);
+  fail = false;
+  store.retry();
+  await settle();
+  assert.deepEqual(requests, [1, 2, 2]);
+  assert.equal(store.getSnapshot().records.length, 15);
+  assert.equal(store.getSnapshot().error, null);
+  store.stop();
+});
+
+test("Strict Mode setup/cleanup/setup starts only one initial transport", async () => {
   let requests = 0;
-  apiClient.defaults.adapter = async (config) => {
-    requests++;
-    controller.abort();
-    return response(config, pageResponse(records.slice(0, 50), 1, 50, records.length));
-  };
-  await assert.rejects(getImageArchive(controller.signal));
+  const store = createInfiniteImageHistory(async () => { requests++; return pageResponse([]); });
+  store.start();
+  store.stop();
+  store.start();
+  await settle();
   assert.equal(requests, 1);
+  store.stop();
+});
+
+test("refresh rejects stale success and stale failures even when transport ignores abort", async () => {
+  for (const failure of [false, true]) {
+    const pending = deferred();
+    let calls = 0;
+    let staleSignal;
+    const store = createInfiniteImageHistory(async (page, limit, signal) => {
+      if (++calls === 1) { staleSignal = signal; return pending.promise; }
+      return pageResponse([original], page, limit);
+    });
+    store.start();
+    await settle();
+    store.refresh();
+    assert.equal(staleSignal.aborted, true);
+    await settle();
+    if (failure) pending.reject(httpError(503));
+    else pending.resolve(pageResponse([processed]));
+    await settle();
+    assert.deepEqual(store.getSnapshot().records, [original]);
+    assert.equal(store.getSnapshot().error, null);
+    store.stop();
+  }
+});
+
+test("stopping a collection prevents pending results and queued loads entering another collection", async () => {
+  const pending = deferred();
+  let signal;
+  const old = createInfiniteImageHistory(async (_page, _limit, requestSignal) => { signal = requestSignal; return pending.promise; });
+  old.start();
+  await settle();
+  old.stop();
+  const next = createInfiniteImageHistory(async () => pageResponse([original]));
+  next.start();
+  pending.resolve(pageResponse([processed]));
+  await settle();
+  assert.equal(signal.aborted, true);
+  assert.deepEqual(old.getSnapshot().records, []);
+  assert.deepEqual(next.getSnapshot().records, [original]);
+  next.stop();
+});
+
+test("deletion aborts a pending batch and restarts offsets so surviving images are not skipped", async () => {
+  for (const cascade of [false, true]) {
+    const fixture = archiveFixture(9, () => 2);
+    let records = fixture.records;
+    const pending = deferred();
+    const requests = [];
+    let hold = true;
+    const store = createInfiniteImageHistory(async (page, limit) => {
+      requests.push(page);
+      if (page === 2 && hold) return pending.promise;
+      return pageResponse(records.slice((page - 1) * limit, page * limit), page, limit, records.length);
+    });
+    store.start();
+    await settle();
+    const stale = store.loadMore();
+    store.pause();
+    const staleResponse = pageResponse(records.slice(10, 20), 2, 10, records.length);
+    const id = cascade ? fixture.originals[0]._id : records[0]._id;
+    records = records.filter((image) => image._id !== id && (!cascade || image.originalImageId !== id));
+    hold = false;
+    store.refresh();
+    await settle();
+    pending.resolve(staleResponse);
+    await stale;
+    while (store.getSnapshot().hasMore) await store.loadMore();
+    assert.deepEqual(store.getSnapshot().records.map((image) => image._id), records.map((image) => image._id));
+    assert.equal(store.getSnapshot().total, records.length);
+    assert.deepEqual(requests, [1, 2, 1, 2, 3]);
+    store.stop();
+  }
+});
+
+test("external count changes preserve loaded images and require a manual restart", async () => {
+  let records = archiveFixture(15, () => 0).records;
+  const requests = [];
+  const store = createInfiniteImageHistory(async (page, limit) => {
+    requests.push(page);
+    return pageResponse(records.slice((page - 1) * limit, page * limit), page, limit, records.length);
+  });
+  store.start();
+  await settle();
+  records = records.slice(1);
+  await store.loadMore();
+  assert.match(store.getSnapshot().error, /archive changed/);
+  assert.equal(store.getSnapshot().records.length, 10);
+  await store.loadMore();
+  store.retry();
+  await settle();
+  await store.loadMore();
+  assert.deepEqual(requests, [1, 2, 1, 2]);
+  assert.deepEqual(store.getSnapshot().records, records);
+  store.stop();
+});
+
+test("partial groups avoid claiming missing originals or versions until the list is complete", () => {
+  const render = (images, incomplete) => renderToStaticMarkup(createElement(MemoryRouter, null,
+    createElement(ImageGroupCard, { group: history.groupImagesByOriginal(images)[0], incomplete, deleteDisabled: false, onDelete() {} })));
+  assert.match(render([processed], true), /original may appear/);
+  assert.doesNotMatch(render([processed], true), /original is unavailable/);
+  assert.match(render([original], true), /No versions loaded yet/);
+  assert.match(render([original], false), /No transformed versions yet/);
+  const props = { hasMore: true, loading: false, error: null, disabled: false, onLoadMore() {}, onRetry() {} };
+  assert.match(renderToStaticMarkup(createElement(InfiniteImageLoader, { ...props, loading: true })), /Loading more images/);
+  const failed = renderToStaticMarkup(createElement(InfiniteImageLoader, { ...props, error: "Try again" }));
+  assert.match(failed, /role="alert"/);
+  assert.match(failed, /Retry/);
+  assert.match(renderToStaticMarkup(createElement(InfiniteImageLoader, { ...props, hasMore: false })), /reached the end/);
 });
 
 test("history requests exact server pagination with the existing Bearer interceptor", async () => {
@@ -1222,12 +1356,53 @@ test("expired or failed saved previews do not automatically retry signed storage
   } finally { globalThis.fetch = oldFetch; }
 });
 
-test("result identifies the output filename separately from its original and downloads the actual format", () => {
+test("result identifies the output filename separately from its original and sets the download hint", () => {
   const markup = renderToStaticMarkup(createElement(ProcessingResult, { image: processed, refreshing: false, onRefresh() {}, onReset() {} }));
   assert.match(markup, /PROCESSED FILE/);
-  assert.match(markup, /version.webp/);
+  assert.match(markup, /photo.webp/);
   assert.match(markup, /Source original: photo.png/);
-  assert.match(markup, /download="version.webp"/);
+  assert.match(markup, /download="photo.webp"/);
   assert.match(markup, /WEBP/);
   assert.match(markup, /20 × 10 px/);
+});
+
+
+test("processed filenames preserve the basename and use actual output metadata without mutating records", () => {
+  for (const [name, basename] of [
+    ["photo.jpg", "photo"], ["photo.JPEG", "photo"], ["photo.PNG", "photo"],
+    ["photo.WEBP", "photo"], ["my.photo.final.JPG", "my.photo.final"],
+    ["photo", "photo"], [".photo", ".photo"], ["photo.", "photo"],
+    ["მთა holiday.jpg", "მთა holiday"],
+  ]) {
+    for (const [format, extension] of [["jpeg", "jpg"], ["png", "png"], ["webp", "webp"]]) {
+      const image = Object.freeze({ ...processed, originalName: name, format, transformations: { format: "png" } });
+      assert.equal(imageFilename(image), `${basename}.${extension}`);
+      assert.equal(image.originalName, name);
+      assert.equal(image.filename, "version.webp");
+      assert.equal(imageFilename({ ...image, kind: "original" }), name);
+      assert.equal(imageFilename({ ...image, kind: undefined }), name);
+    }
+  }
+});
+
+test("JPEG originals and WebP versions have consistent names across cards, version lists, and Studio", () => {
+  const source = { ...original, originalName: "photo.jpg", format: "jpeg" };
+  // Deliberately stale storage filename and transformation metadata must not determine the title.
+  const version = { ...processed, originalName: "photo.jpg", filename: "uuid.jpg", transformations: { format: "jpeg" } };
+  const renderGroup = (images) => renderToStaticMarkup(createElement(MemoryRouter, null,
+    createElement(ImageGroupCard, { group: history.groupImagesByOriginal(images)[0], deleteDisabled: false, onDelete() {} })));
+  const grouped = renderGroup([source, version]);
+  assert.match(grouped, /<h3[^>]*>photo.jpg<\/h3>/);
+  assert.match(grouped, /<h3[^>]*>photo.webp<\/h3>/);
+  assert.match(grouped, /JPEG/);
+  assert.match(grouped, /WEBP/);
+  assert.match(renderGroup([version]), /<h3[^>]*>photo.webp<\/h3>/);
+  const result = renderToStaticMarkup(createElement(ProcessingResult, { image: version, refreshing: false, onRefresh() {}, onReset() {} }));
+  assert.match(result, />photo.webp<\/p>/);
+  assert.match(result, /Source original: photo.jpg/);
+  assert.match(result, /download="photo.webp"/);
+  assert.doesNotMatch(result, /uuid.jpg/);
+  const dialog = renderToStaticMarkup(createElement(DeleteImageDialog, { image: version, pending: false, error: null, onCancel() {}, onConfirm() {}, onRefresh() {} }));
+  assert.match(dialog, />photo.webp<\/p>/);
+  assert.match(renderToStaticMarkup(createElement(FavoriteButton, { image: version })), /favorites: photo.webp/);
 });

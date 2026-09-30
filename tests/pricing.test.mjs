@@ -2,155 +2,149 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createMemoryRouter, MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { createServer } from "vite";
 
-const vite = await createServer({
-  server: { middlewareMode: true, hmr: false, watch: null },
-  logLevel: "error",
-});
+const vite = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "error" });
 after(() => vite.close());
-
 const { default: Pricing } = await vite.ssrLoadModule("/src/pages/Pricing.tsx");
-const { AuthContext } = await vite.ssrLoadModule("/src/auth/AuthContext.ts");
-const {
-  PRICING_COUNTDOWN_SECONDS, safePricingReturnTo, pricingReturnFromState,
-  pricingLinkState, startPricingCountdown,
-} = await vite.ssrLoadModule("/src/utils/pricing.ts");
+const { default: DemoPlanDialog } = await vite.ssrLoadModule("/src/components/pricing/DemoPlanDialog.tsx");
+const { activateModal } = await vite.ssrLoadModule("/src/utils/modal.ts");
+const { authDestination } = await vite.ssrLoadModule("/src/auth/destination.ts");
+const render = (component, props = {}) => renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: ["/pricing"] }, createElement(component, props)));
 
-function renderPricing(isAuthenticated = false) {
-  return renderToStaticMarkup(createElement(MemoryRouter, { initialEntries: ["/pricing"] },
-    createElement(AuthContext.Provider, { value: { isAuthenticated } }, createElement(Pricing)),
-  ));
+test("renders three illustrative plans with the requested copy, prices, quotas and shared features", () => {
+  const html = render(Pricing);
+  assert.match(html, /<h1[^>]*>A little plan for every imagination\.<\/h1>/);
+  assert.match(html, /Choose your creative ambitions\. We’ll take care of the pixels\./);
+  assert.equal((html.match(/<article /g) ?? []).length, 3);
+  for (const [name, price, quota] of [["Starter", "0", "10"], ["Creator", "9", "100"], ["Studio", "19", "Unlimited"]]) {
+    assert.match(html, new RegExp(`<h2[^>]*>${name}</h2>`));
+    assert.ok(html.includes(`$${price}</span>`));
+    assert.ok(html.includes(`${quota} image uploads`));
+  }
+  assert.equal((html.match(/\/ month/g) ?? []).length, 2);
+  for (const feature of ["All image transformations", "Original image storage", "Download processed images"]) {
+    assert.equal(html.split(feature).length - 1, 3);
+  }
+  assert.ok(html.includes("Demo plans — no payment required. All features are free; the upload quotas above are illustrative."));
+  assert.match(html, /md:grid-cols-3/);
+  assert.match(html, /motion-safe:hover:-translate-y-1/);
+});
+
+test("only Creator is marked Most popular and both paid-looking buttons open a dialog", () => {
+  const html = render(Pricing);
+  const articles = html.match(/<article\b[\s\S]*?<\/article>/g);
+  assert.doesNotMatch(articles[0], /Most popular/);
+  assert.match(articles[1], /Most popular/);
+  assert.doesNotMatch(articles[2], /Most popular/);
+  for (const name of ["Creator", "Studio"]) {
+    assert.match(html, new RegExp(`<button[^>]*aria-haspopup="dialog"[^>]*>Get ${name}`));
+  }
+  assert.doesNotMatch(html, /<dialog|countdown|Taking you back|Stay here|Start processing/i);
+});
+
+test("Starter and the modal primary action target the actual protected History route", () => {
+  assert.match(render(Pricing), /<a[^>]*href="\/images"[^>]*>Start creating/);
+  const html = render(DemoPlanDialog, { onClose() {} });
+  assert.match(html, /<a[^>]*href="\/images"[^>]*>Take me to History →<\/a>/);
+  assert.doesNotMatch(html, /href="\/(upload|studio)"/);
+});
+
+test("the styled native modal has a labelled title, description and visible close control", () => {
+  const html = render(DemoPlanDialog, { onClose() {} });
+  assert.match(html, /<dialog[^>]*aria-labelledby="pricing-dialog-title"[^>]*aria-describedby="pricing-dialog-description"/);
+  assert.match(html, /id="pricing-dialog-title"[^>]*>Your money is safe\./);
+  assert.ok(html.includes("Just kidding — this is a portfolio project. All features are free. Go make something beautiful."));
+  assert.match(html, /<button[^>]*aria-label="Close dialog"/);
+  assert.match(html, /backdrop:bg-ink\/60/);
+});
+
+test("post-login History intent is narrowly validated and ordinary sign-ins still use Dashboard", () => {
+  assert.equal(authDestination({ returnTo: "/images" }), "/images");
+  for (const state of [undefined, null, {}, { returnTo: "https://example.com" }, { returnTo: "//example.com" }, { returnTo: "/upload" }, { returnTo: "/images/../upload" }, { returnTo: "/login" }, { returnTo: "/images?next=https://example.com" }]) {
+    assert.equal(authDestination(state), "/dashboard");
+  }
+});
+
+function modalEnvironment(t) {
+  const savedDocument = globalThis.document;
+  const savedElement = globalThis.HTMLElement;
+  class Control {
+    isConnected = true;
+    focus() { globalThis.document.activeElement = this; }
+  }
+  const trigger = new Control();
+  const close = new Control();
+  const link = new Control();
+  globalThis.HTMLElement = Control;
+  globalThis.document = { activeElement: trigger, body: { style: { overflow: "auto" } }, documentElement: { style: { overflow: "scroll" } } };
+  class Dialog extends EventTarget {
+    open = false;
+    showModal() { this.open = true; }
+    close() { this.open = false; }
+    querySelectorAll() { return [close, link]; }
+  }
+  t.after(() => {
+    if (savedDocument === undefined) delete globalThis.document; else globalThis.document = savedDocument;
+    if (savedElement === undefined) delete globalThis.HTMLElement; else globalThis.HTMLElement = savedElement;
+  });
+  return { dialog: new Dialog(), trigger, close, link };
+}
+function key(dialog, value, shiftKey = false) {
+  const event = new Event("keydown", { cancelable: true });
+  Object.assign(event, { key: value, shiftKey });
+  dialog.dispatchEvent(event);
+  return event;
 }
 
-test("renders the editorial free pricing page with one plan and supported features", () => {
-  const html = renderPricing();
-  assert.match(html, /<h1[^>]*>Simple pricing\.<\/h1>/);
-  assert.match(html, /Just kidding\./);
-  assert.match(html, /It&#x27;s free\./);
-  assert.equal((html.match(/\$0/g) ?? []).length, 1);
-  assert.match(html, /No credit card\. No mysterious &quot;Pro&quot; tier\./);
-  for (const feature of ["Image uploads", "Resize and crop", "Rotate, flip, and mirror", "Grayscale and sepia filters", "JPEG, PNG, and WebP output", "Image history", "Original image preservation", "Multiple transformed versions"]) {
-    assert.ok(html.includes(feature), feature);
-  }
-  assert.doesNotMatch(html, /unlimited|checkout|subscribe/i);
-});
-
-test("initial countdown displays five with a keyboard accessible cancel button", () => {
-  const html = renderPricing();
-  assert.equal(PRICING_COUNTDOWN_SECONDS, 5);
-  assert.match(html, /Taking you back in <span[^>]*>5<\/span>\.\.\./);
-  assert.match(html, /<button type="button"[^>]*>Stay here<\/button>/);
-  assert.match(html, /aria-live="off"/);
-  assert.match(html, /motion-safe:transition-transform/);
-});
-
-test("signed-in Start processing goes to the existing upload route", () => {
-  assert.match(renderPricing(true), /<a[^>]*href="\/upload"[^>]*>Start processing/);
-});
-
-test("signed-out Start processing uses the existing login flow", () => {
-  assert.match(renderPricing(false), /<a[^>]*href="\/login"[^>]*>Start processing/);
-});
-
-test("countdown decreases once per second and completes once after five seconds", (t) => {
-  t.mock.timers.enable({ apis: ["setInterval"] });
-  const ticks = [];
-  let completed = 0;
-  const cancel = startPricingCountdown((value) => ticks.push(value), () => completed++);
-  t.after(cancel);
-  t.mock.timers.tick(999);
-  assert.deepEqual(ticks, []);
-  for (let second = 0; second < 4; second++) {
-    t.mock.timers.tick(second === 0 ? 1 : 1000);
-    assert.equal(ticks.at(-1), 4 - second);
-    assert.equal(completed, 0);
-  }
-  t.mock.timers.tick(1000);
-  assert.deepEqual(ticks, [4, 3, 2, 1]);
-  assert.equal(completed, 1);
-  t.mock.timers.tick(10000);
-  assert.equal(completed, 1);
-});
-
-test("Stay here's cancellation stops both ticks and automatic return", (t) => {
-  t.mock.timers.enable({ apis: ["setInterval"] });
-  const ticks = [];
-  let completed = false;
-  const cancel = startPricingCountdown((value) => ticks.push(value), () => { completed = true; });
-  t.mock.timers.tick(1000);
-  cancel();
-  t.mock.timers.tick(10000);
-  assert.deepEqual(ticks, [4]);
-  assert.equal(completed, false);
-});
-
-test("effect cleanup prevents callbacks after unmount, including repeated cleanup", (t) => {
-  t.mock.timers.enable({ apis: ["setInterval"] });
-  const unexpected = () => assert.fail("A cleaned-up timer must not call React or navigate");
-  const cleanup = startPricingCountdown(unexpected, unexpected);
+test("modal locks background scrolling, wraps Tab in both directions, and restores focus/styles", (t) => {
+  const { dialog, trigger, close, link } = modalEnvironment(t);
+  const cleanup = activateModal(dialog, close);
+  assert.equal(dialog.open, true);
+  assert.equal(document.activeElement, close);
+  assert.equal(document.body.style.overflow, "hidden");
+  assert.equal(document.documentElement.style.overflow, "hidden");
+  assert.equal(key(dialog, "Tab", true).defaultPrevented, true);
+  assert.equal(document.activeElement, link);
+  assert.equal(key(dialog, "Tab").defaultPrevented, true);
+  assert.equal(document.activeElement, close);
+  assert.equal(key(dialog, "Tab").defaultPrevented, false, "Interior navigation remains native");
+  assert.equal(key(dialog, "Escape").defaultPrevented, false, "Escape reaches native dialog cancellation");
   cleanup();
+  assert.equal(dialog.open, false);
+  assert.equal(document.activeElement, trigger);
+  assert.equal(document.body.style.overflow, "auto");
+  assert.equal(document.documentElement.style.overflow, "scroll");
+  close.focus();
+  assert.equal(key(dialog, "Tab", true).defaultPrevented, false, "Cleanup removes the keyboard listener");
+});
+
+test("Strict Mode modal setup/cleanup/setup keeps the correct focus and scroll state", (t) => {
+  const { dialog, trigger, close } = modalEnvironment(t);
+  activateModal(dialog, close)();
+  const cleanup = activateModal(dialog, close);
+  assert.equal(dialog.open, true);
+  assert.equal(document.body.style.overflow, "hidden");
   cleanup();
-  t.mock.timers.tick(10000);
+  assert.equal(document.activeElement, trigger);
+  assert.equal(document.body.style.overflow, "auto");
 });
 
-test("Strict Mode setup / cleanup / setup leaves only one active countdown", (t) => {
-  t.mock.timers.enable({ apis: ["setInterval"] });
-  startPricingCountdown(() => assert.fail("Old tick"), () => assert.fail("Old redirect"))();
-  const ticks = [];
-  let completed = 0;
-  const cleanup = startPricingCountdown((value) => ticks.push(value), () => completed++);
-  t.after(cleanup);
-  for (let second = 0; second < 5; second++) t.mock.timers.tick(1000);
-  assert.deepEqual(ticks, [4, 3, 2, 1]);
-  assert.equal(completed, 1);
+test("navigation cleanup does not focus a disconnected pricing button", (t) => {
+  const { dialog, trigger, close } = modalEnvironment(t);
+  const cleanup = activateModal(dialog, close);
+  trigger.isConnected = false;
+  cleanup();
+  assert.equal(document.activeElement, close);
+  assert.equal(document.documentElement.style.overflow, "scroll");
 });
 
-test("safe return preserves internal pathname, query, and fragment", () => {
-  assert.equal(safePricingReturnTo("/images?page=2#versions"), "/images?page=2#versions");
-  for (const path of ["/", "/dashboard", "/upload", "/images", "/studio", "/history", "/login", "/register"]) {
-    assert.equal(safePricingReturnTo(path), path);
-  }
-});
 
-test("external, malformed, unknown, and Pricing destinations fall back to home", () => {
-  for (const value of [undefined, null, {}, 1, "", "images", "https://example.com", "//example.com/upload", "/\\example.com/upload", "/\n/example.com", "/pricing", "/PRICING/", "/pricing?returnTo=/images", "/images/../pricing", "/%70ricing", "/missing"]) {
-    assert.equal(safePricingReturnTo(value), "/", String(value));
-  }
-  for (const state of [undefined, null, "bad", {}, { returnTo: "https://example.com" }]) {
-    assert.equal(pricingReturnFromState(state), "/");
-  }
-});
-
-test("Pricing links carry the originating location, and repeated clicks preserve it", () => {
-  const state = pricingLinkState({ pathname: "/images", search: "?page=2", hash: "#versions", state: null });
-  assert.deepEqual(state, { returnTo: "/images?page=2#versions" });
-  assert.deepEqual(pricingLinkState({ pathname: "/pricing", search: "", hash: "", state }), state);
-  assert.deepEqual(pricingLinkState({ pathname: "/Pricing/", search: "", hash: "", state: { returnTo: "/pricing" } }), { returnTo: "/" });
-});
-
-test("countdown returns through React Router and replaces Pricing to prevent a back loop", async (t) => {
-  t.mock.timers.enable({ apis: ["setInterval"] });
-  const router = createMemoryRouter([{ path: "*", element: null }], { initialEntries: ["/upload", "/images?page=2#versions"] });
-  t.after(() => router.dispose());
-  await router.navigate("/pricing", { state: pricingLinkState(router.state.location) });
-  const returnTo = pricingReturnFromState(router.state.location.state);
-  let navigation;
-  const cancel = startPricingCountdown(() => {}, () => { navigation = router.navigate(returnTo, { replace: true }); });
-  t.after(cancel);
-  for (let second = 0; second < 5; second++) t.mock.timers.tick(1000);
-  await navigation;
-  assert.equal(router.state.location.pathname, "/images");
-  assert.equal(router.state.location.search, "?page=2");
-  assert.equal(router.state.location.hash, "#versions");
-  await router.navigate(-1);
-  assert.equal(router.state.location.pathname, "/images");
-});
-
-test("direct Pricing entry returns home without inspecting external browser history", async (t) => {
-  const router = createMemoryRouter([{ path: "*", element: null }], { initialEntries: ["/pricing"] });
-  t.after(() => router.dispose());
-  await router.navigate(pricingReturnFromState(router.state.location.state), { replace: true });
-  assert.equal(router.state.location.pathname, "/");
+test("pointer-opened modals restore the actual plan button even when the browser did not focus it", (t) => {
+  const { dialog, trigger, close, link } = modalEnvironment(t);
+  document.activeElement = link;
+  const cleanup = activateModal(dialog, close, trigger);
+  cleanup();
+  assert.equal(document.activeElement, trigger);
 });

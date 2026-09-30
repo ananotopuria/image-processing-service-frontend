@@ -1,3 +1,4 @@
+import { imageFilename } from "../../utils/imageFilename";
 import { useEffect, useRef, useState } from "react";
 import { Check, Download, ExternalLink, RefreshCw } from "lucide-react";
 import type { ImageMetadata } from "../../api/images.types";
@@ -35,12 +36,12 @@ export default function ProcessingResult({ image, refreshing, onRefresh, onReset
       <div className="mt-7 grid gap-8 lg:grid-cols-[1.2fr_1fr]">
         <div className="specimen-result-arrive flex min-h-64 items-center justify-center border border-specimen-line bg-specimen-paper p-5 sm:min-h-80">
           {url && !expired && !previewFailed ? (
-            <LoadingImage src={url} alt={`Processed ${image.originalName}`} width={image.width} height={image.height} referrerPolicy="no-referrer" onError={() => setPreviewFailed(true)} containerClassName="flex min-h-64 w-full items-center justify-center sm:min-h-80" className="max-h-112 max-w-full object-contain" />
+            <LoadingImage src={url} alt={`Processed ${imageFilename(image)}`} width={image.width} height={image.height} referrerPolicy="no-referrer" onError={() => setPreviewFailed(true)} containerClassName="flex min-h-64 w-full items-center justify-center sm:min-h-80" className="max-h-112 max-w-full object-contain" />
           ) : <p className="max-w-sm text-center text-sm leading-relaxed text-muted-ink">{expired ? "The preview link has expired. Refresh the links to view your image again." : "Your image was processed, but its preview is unavailable. Refresh the links to try again."}</p>}
         </div>
         <div className="min-w-0">
           <p className="font-mono text-[10px] text-muted-ink">PROCESSED FILE</p>
-          <p className="mt-2 wrap-anywhere text-sm font-semibold">{image.filename}</p>
+          <p className="mt-2 wrap-anywhere text-sm font-semibold">{imageFilename(image)}</p>
           <p className="mt-3 wrap-anywhere text-xs text-muted-ink">Source original: {image.originalName}</p>
           <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-6 border-y border-archive-line py-6 text-sm">
             {[
@@ -59,7 +60,7 @@ export default function ProcessingResult({ image, refreshing, onRefresh, onReset
             </ul>
           </div>}
           <div className="mt-6 flex flex-wrap gap-4">
-            {downloadUrl && !expired && <a href={downloadUrl} download={image.filename} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-12 items-center gap-3 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover"><Download size={16} aria-hidden="true" /> Download image<span className="sr-only"> (opens in a new tab)</span></a>}
+            {downloadUrl && !expired && <a href={downloadUrl} download={imageFilename(image)} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-12 items-center gap-3 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover"><Download size={16} aria-hidden="true" /> Download image<span className="sr-only"> (opens in a new tab)</span></a>}
             {url && !expired && <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-12 items-center gap-2 text-sm underline">View image <ExternalLink size={15} aria-hidden="true" /><span className="sr-only"> (opens in a new tab)</span></a>}
           </div>
           <p className="mt-4 text-xs leading-relaxed text-muted-ink">Image links are temporary and last up to 15 minutes. Refresh them here if access expires.</p>

@@ -1,10 +1,8 @@
-import { Link, useLocation } from "react-router-dom";
-import { pricingLinkState } from "../../utils/pricing";
+import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 
 function PublicFooter() {
   const { isAuthenticated } = useAuth();
-  const location = useLocation();
 
   return (
     <footer className="border-t border-current/10">
@@ -30,7 +28,6 @@ function PublicFooter() {
               <li key={to}>
                 <Link
                   to={to}
-                  state={to === "/pricing" ? pricingLinkState(location) : undefined}
                   className="inline-flex min-h-11 items-center underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-2 focus-visible:outline-offset-4"
                 >
                   {label}

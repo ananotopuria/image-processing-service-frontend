@@ -1,3 +1,4 @@
+import { imageFilename } from "../../utils/imageFilename";
 import { rememberReprocessingScroll } from "../../hooks/useReprocessingScroll";
 import { Link, useLocation } from "react-router-dom";
 import { savedOriginalUrl } from "../../utils/reprocessing";
@@ -31,7 +32,7 @@ export default function ImageHistoryItem({ image: initialImage, compact = false,
   return (
     <div className="min-w-0">
       <div className="relative flex aspect-4/3 items-center justify-center overflow-hidden border-b border-archive-line bg-specimen-paper">
-        {canPreview ? <LoadingImage src={url} alt={`${imageKindLabel(image)}: ${image.originalName}`} loading="lazy" referrerPolicy="no-referrer" onError={failPreview} containerClassName="h-full w-full" className="h-full w-full object-contain p-3" /> : (
+        {canPreview ? <LoadingImage src={url} alt={`${imageKindLabel(image)}: ${imageFilename(image)}`} loading="lazy" referrerPolicy="no-referrer" onError={failPreview} containerClassName="h-full w-full" className="h-full w-full object-contain p-3" /> : (
           <div className="flex max-w-xs flex-col items-center gap-3 px-5 py-4 text-center text-xs leading-relaxed text-muted-ink">
             <ImageOff size={24} strokeWidth={1} aria-hidden="true" />
             <p>{expired ? "Refresh this temporary link to see the preview." : "The preview could not be displayed."}</p>
@@ -42,7 +43,7 @@ export default function ImageHistoryItem({ image: initialImage, compact = false,
         <span className="absolute top-3 left-3 rounded-sm border border-archive-line bg-paper px-2.5 py-1 font-mono text-[10px]">{imageKindLabel(image)}</span>
       </div>
       <div className="p-5">
-        <h3 className="wrap-anywhere font-editorial text-2xl leading-tight">{image.originalName}</h3>
+        <h3 className="wrap-anywhere font-editorial text-2xl leading-tight">{imageFilename(image)}</h3>
         <p className="mt-3 text-xs leading-relaxed text-muted-ink">
           {image.format.toUpperCase()}
           {image.width && image.height ? ` · ${image.width} × ${image.height} px` : ""}
@@ -74,7 +75,7 @@ export default function ImageHistoryItem({ image: initialImage, compact = false,
               <button type="button" disabled={refreshing} onClick={() => { void refresh(); }} className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs underline disabled:cursor-wait disabled:opacity-50"><RefreshCw size={13} aria-hidden="true" />Refresh links</button>
               {transformUrl ? <Link to={transformUrl} onClick={(event) => { event.stopPropagation(); rememberReprocessingScroll(location.key); }} className="inline-flex min-h-11 items-center gap-2 text-xs underline focus-visible:outline-2 focus-visible:outline-offset-2"><WandSparkles size={14} aria-hidden="true" />Transform again</Link>
                 : <span className="text-xs leading-relaxed text-muted-ink">Transform again unavailable: no saved original. Upload the original file to create a new version.</span>}
-              {onDelete && <button type="button" disabled={deleteDisabled} onClick={() => onDelete(image)} aria-label={`Delete ${imageKindLabel(image).toLowerCase()}: ${image.originalName}`} className="ml-auto inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs underline disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={14} aria-hidden="true" />Delete</button>}
+              {onDelete && <button type="button" disabled={deleteDisabled} onClick={() => onDelete(image)} aria-label={`Delete ${imageKindLabel(image).toLowerCase()}: ${imageFilename(image)}`} className="ml-auto inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs underline disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={14} aria-hidden="true" />Delete</button>}
             </div>
           </>
         )}

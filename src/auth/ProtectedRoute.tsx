@@ -1,10 +1,13 @@
-import { Navigate, Outlet, useNavigate } from "react-router-dom";
+import { authDestination } from "./destination";
+import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "./useAuth";
 import ServiceStatus from "../components/ServiceStatus";
 
 export default function ProtectedRoute({ guestOnly = false }: { guestOnly?: boolean }) {
   const { isAuthenticated, isRestoring, sessionError, retrySession, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const signInState = { returnTo: location.pathname === "/images" ? "/images" : authDestination(location.state) };
 
   if (isRestoring || sessionError) {
     return (
@@ -23,7 +26,7 @@ export default function ProtectedRoute({ guestOnly = false }: { guestOnly?: bool
               <button type="button" onClick={retrySession} className="min-h-12 cursor-pointer rounded-sm bg-ink px-5 text-paper focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink">
                 Try again
               </button>
-              <button type="button" onClick={() => { logout(); navigate("/login", { replace: true }); }} className="min-h-12 cursor-pointer px-3 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4">
+              <button type="button" onClick={() => { logout(); navigate("/login", { replace: true, state: signInState }); }} className="min-h-12 cursor-pointer px-3 underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4">
                 Logout
               </button>
             </div>
@@ -34,8 +37,8 @@ export default function ProtectedRoute({ guestOnly = false }: { guestOnly?: bool
   }
 
   if (guestOnly) {
-    return isAuthenticated ? <Navigate to="/dashboard" replace /> : <Outlet />;
+    return isAuthenticated ? <Navigate to={authDestination(location.state)} replace /> : <Outlet />;
   }
 
-  return isAuthenticated ? <Outlet /> : <Navigate to="/login" replace />;
+  return isAuthenticated ? <Outlet /> : <Navigate to="/login" state={signInState} replace />;
 }

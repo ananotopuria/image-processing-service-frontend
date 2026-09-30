@@ -1,6 +1,7 @@
+import { authDestination } from "../../auth/destination";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowRight } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { getAuthErrorMessage } from "../../api/errors";
 import { useAuth } from "../../auth/useAuth";
 import AuthField from "./AuthField";
@@ -17,6 +18,7 @@ function AuthForm({ mode }: { mode: "login" | "register" }) {
   const request = useRef<AbortController | null>(null);
   const { login, register } = useAuth();
   const navigate = useNavigate();
+  const destination = authDestination(useLocation().state);
 
   useEffect(() => () => request.current?.abort(), []);
 
@@ -71,7 +73,7 @@ function AuthForm({ mode }: { mode: "login" | "register" }) {
       } else {
         await login({ email, password }, controller.signal);
       }
-      if (!controller.signal.aborted) navigate("/dashboard", { replace: true });
+      if (!controller.signal.aborted) navigate(destination, { replace: true });
     } catch (error: unknown) {
       if (!controller.signal.aborted) setNotice(getAuthErrorMessage(error));
     } finally {
@@ -164,6 +166,7 @@ function AuthForm({ mode }: { mode: "login" | "register" }) {
         {isRegister ? "Already have an account?" : "New to Mothframe?"}{" "}
         <Link
           to={isRegister ? "/login" : "/register"}
+          state={{ returnTo: destination }}
           className="inline-flex min-h-11 items-center text-ink underline decoration-ink/40 transition-colors hover:decoration-ink motion-reduce:transition-none"
         >
           {isRegister ? "Sign in." : "Create an account."}
