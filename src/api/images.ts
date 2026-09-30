@@ -1,5 +1,7 @@
+import { favoriteState } from "../utils/favorites";
+import { getRetryAfterDeadline } from "./imageErrors";
 import { apiClient } from "./client";
-import type { ImageMetadata, PaginatedImagesResponse, TransformImageRequest } from "./images.types";
+import type { FavoriteResponse, ImageMetadata, PaginatedImagesResponse, TransformImageRequest } from "./images.types";
 import { ImageInputError, isImageFormat, isImageTransformations, validateImageFile } from "../utils/images";
 
 function readImageResponse(data: unknown, expectedKind?: ImageMetadata["kind"]): ImageMetadata {
@@ -10,7 +12,7 @@ function readImageResponse(data: unknown, expectedKind?: ImageMetadata["kind"]):
     typeof record._id !== "string" || !/^[a-f\d]{24}$/i.test(record._id) ||
     (expectedKind !== undefined && record.kind !== expectedKind) ||
     (record.kind !== undefined && record.kind !== "original" && record.kind !== "transformed") ||
-    typeof record.originalName !== "string" || typeof record.filename !== "string" || typeof record.path !== "string" ||
+    typeof record.originalName !== "string" || typeof record.filename !== "string" || typeof record.isFavorite !== "boolean" ||
     !isImageFormat(record.format) || !positiveInteger(record.originalSize)
   ) throw invalidResponse();
   if (expectedKind === "transformed" && (
@@ -45,31 +47,41 @@ export async function uploadImage(file: File, signal: AbortSignal): Promise<Imag
   const form = await createUploadFormData(file);
   // Let the browser set multipart Content-Type, including its generated boundary.
   const { data } = await apiClient.post<unknown>("/api/images/upload", form, { signal });
-  return readImageResponse(data, "original");
+  return { ...readImageResponse(data, "original"), isFavorite: false };
 }
 
 export async function transformImage(originalId: string, body: TransformImageRequest, signal: AbortSignal): Promise<ImageMetadata> {
   const { data } = await apiClient.post<unknown>(`/api/images/${encodeURIComponent(originalId)}/transform`, body, { signal, timeout: 120000 });
   const image = readImageResponse(data, "transformed");
   if (image.originalImageId !== originalId) throw invalidResponse();
-  return image;
+  return { ...image, isFavorite: false };
 }
 
 export async function getImageById(imageId: string, signal: AbortSignal): Promise<ImageMetadata> {
+  const ticket = favoriteState.read();
   const { data } = await apiClient.get<unknown>(`/api/images/${encodeURIComponent(imageId)}`, { signal });
   const image = readImageResponse(data);
   if (image._id !== imageId) throw invalidResponse();
-  return image;
+  return favoriteState.accept([image], ticket)[0];
 }
 
 // Preserve the studio's existing helper; all records share the same refresh endpoint.
 export { getImageById as refreshImageLinks };
 
-export async function getImages(page = 1, limit = 10, signal?: AbortSignal): Promise<PaginatedImagesResponse> {
+export function getImages(page = 1, limit = 10, signal?: AbortSignal) {
+  return getImagePage("/api/images", page, limit, signal);
+}
+
+export async function getFavoriteImages(page = 1, limit = 10, signal?: AbortSignal) {
+  return favoriteRequest(() => getImagePage("/api/images/favorites", page, limit, signal));
+}
+
+async function getImagePage(endpoint: string, page: number, limit: number, signal?: AbortSignal): Promise<PaginatedImagesResponse> {
   if (!Number.isInteger(page) || page < 1 || page > 100000 || !Number.isInteger(limit) || limit < 1 || limit > 50) {
     throw new ImageInputError("Choose a valid image page and a page size from 1 to 50.");
   }
-  const { data } = await apiClient.get<unknown>("/api/images", { params: { page, limit }, signal });
+  const ticket = favoriteState.read();
+  const { data } = await apiClient.get<unknown>(endpoint, { params: { page, limit }, signal });
   if (!data || typeof data !== "object") throw invalidHistoryResponse();
   const result = data as Record<string, unknown>;
   if (
@@ -81,6 +93,8 @@ export async function getImages(page = 1, limit = 10, signal?: AbortSignal): Pro
   try { items = result.items.map((item) => readImageResponse(item)); }
   catch { throw invalidHistoryResponse(); }
   if (new Set(items.map((item) => item._id)).size !== items.length) throw invalidHistoryResponse();
+  if (endpoint === "/api/images/favorites" && items.some((image) => !image.isFavorite)) throw invalidHistoryResponse();
+  items = favoriteState.accept(items, ticket);
   return { items, page, limit, total: result.total, totalPages: Math.ceil(result.total / limit) };
 }
 
@@ -122,4 +136,31 @@ export async function deleteImage(imageId: string, signal: AbortSignal): Promise
   if (!data || typeof data !== "object" || !("message" in data) || data.message !== "Image deleted successfully") {
     throw new ImageInputError("Deletion could not be confirmed. Refresh the gallery before trying again.");
   }
+}
+
+async function favoriteRequest<T>(send: () => Promise<T>): Promise<T> {
+  if (favoriteState.getSnapshot().retryAt > Date.now()) {
+    throw new ImageInputError("Too many favorite requests. Wait before trying again.");
+  }
+  const ticket = favoriteState.read();
+  try { return await send(); }
+  catch (error) {
+    const deadline = getRetryAfterDeadline(error);
+    if (deadline && favoriteState.current(ticket)) favoriteState.rateLimit(deadline);
+    throw error;
+  }
+}
+
+export async function setImageFavorite(imageId: string, isFavorite: boolean, signal: AbortSignal): Promise<FavoriteResponse> {
+  return favoriteRequest(async () => {
+    const path = `/api/images/${encodeURIComponent(imageId)}/favorite`;
+    const { data } = isFavorite
+      ? await apiClient.put<unknown>(path, undefined, { signal })
+      : await apiClient.delete<unknown>(path, { signal });
+    if (!data || typeof data !== "object" || !("imageId" in data) || data.imageId !== imageId ||
+      !("isFavorite" in data) || typeof data.isFavorite !== "boolean") {
+      throw new ImageInputError("The favorite change could not be confirmed. Refresh your images to check its saved state.");
+    }
+    return { imageId, isFavorite: data.isFavorite };
+  });
 }

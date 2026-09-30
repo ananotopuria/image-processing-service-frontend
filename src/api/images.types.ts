@@ -42,7 +42,7 @@ export interface ImageMetadata {
   originalImageId?: string;
   originalName: string;
   filename: string;
-  path: string;
+  isFavorite: boolean;
   format: ImageFormat;
   originalSize: number;
   width?: number;
@@ -64,4 +64,9 @@ export interface PaginatedImagesResponse {
   limit: number;
   total: number;
   totalPages: number;
+}
+
+export interface FavoriteResponse {
+  imageId: string;
+  isFavorite: boolean;
 }

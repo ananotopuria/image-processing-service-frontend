@@ -142,9 +142,8 @@ inside collapsed sections, and request validation still runs before uploading.
 ## Exact successful response
 
 Both POSTs return a **flat JSON image object**, not `{ image: ... }` or `{ data: ... }`.
-The service spreads the Mongoose record, then adds temporary access links. The
-schema has timestamps and disables the Mongoose version key (`__v`). Object IDs
-serialize as strings. The current original response contains:
+The service returns image metadata, caller-specific favorite state, and temporary
+access links. Object IDs serialize as strings. Storage keys are omitted. The current original response contains:
 
 ```ts
 {
@@ -153,8 +152,7 @@ serialize as strings. The current original response contains:
   user: string;
   originalName: string;
   filename: string;       // generated UUID filename
-  path: string;           // originals/{userId}/{uuid}.{format}
-  originalKey: string;    // same key as path on originals
+  isFavorite: boolean;    // caller-specific; false for new uploads and versions
   mimeType: "image/jpeg" | "image/png" | "image/webp";
   format: "jpeg" | "png" | "webp";
   originalSize: number;   // bytes
@@ -191,13 +189,13 @@ output `filename`, `mimeType`, `format`, and a `path` of
 ```
 
 `transformations` contains the applied operations, with resolved quality/format
-and crop offset defaults. `originalKey`, `originalName`, and `originalSize`
+and crop offset defaults. `originalImageId`, `originalName`, and `originalSize`
 refer to the preserved original. Originals omit `originalImageId`, dimensions,
 quality, processedSize, and transformations.
 
 The frontend validates response IDs, kind, file metadata, sizes, and processed
 dimensions before accepting success. It consumes `_id`, `originalImageId`,
-`kind`, `originalName`, `filename`, `path`, `format`, `originalSize`, `width`,
+`kind`, `originalName`, `filename`, `isFavorite`, `format`, `originalSize`, `width`,
 `height`, `quality`, `processedSize`, `transformations`, and the three access-link fields. Unused
 owner/storage metadata is not displayed. Missing access links degrade to metadata
 and a refresh action; malformed required metadata produces an error rather than
@@ -219,8 +217,8 @@ inventing an operation history.
   Credentials or bucket policies can expire access sooner.
 - `GET /api/images/{versionId}` checks ownership and returns metadata with fresh
   access links. The result's Refresh image links action uses this endpoint.
-- `path` and `originalKey` are **S3 object keys, never public URLs**. The frontend
-  neither constructs bucket URLs nor exposes AWS credentials.
+- Responses no longer expose `path` or `originalKey`. The frontend uses only
+  signed access URLs and `originalImageId` for original/version relationships.
 
 Preview and download are supported by the verified backend contract. Live S3
 access has not been verified: signing itself does not check object existence or
@@ -441,3 +439,20 @@ x=10%, y=25%, width=50%, height=50% on a 3000 × 2000 original produces
 `crop: { x: 300, y: 500, width: 1500, height: 1000 }` even with resize and rotation
 enabled. Dragging and responsive layout still require a connected browser for
 visual verification.
+
+
+## User-specific favorites
+
+The Images page preserves complete original/version groups in All images. Favorites
+uses `GET /api/images/favorites?page=1&limit=10` and displays individual records in
+server order, with the endpoint's totals and page count. Switching views resets the
+page. Successful removal refreshes the page and moves back if its last record was
+removed. Empty collections do not show a page count.
+
+Heart buttons use bodyless `PUT /api/images/:id/favorite` and
+`DELETE /api/images/:id/favorite` through the authenticated client. State is
+optimistic, shared by image ID, and rolled back on errors. Pending mutations block
+duplicate clicks; stale reads cannot overwrite newer changes. State lives only in
+memory, clears on token changes, and ignores earlier sessions. Fresh reads remain
+authoritative. Rate limits respect Retry-After seconds or HTTP dates (60 seconds
+when absent), with manual retry and no automatic mutation replay.

@@ -19,7 +19,7 @@ const vite = await createServer({ server: { middlewareMode: true, hmr: false, wa
 const helpers = await vite.ssrLoadModule("/src/utils/images.ts");
 const cropHelpers = await vite.ssrLoadModule("/src/utils/crop.ts");
 const { imagePreviewSource } = await vite.ssrLoadModule("/src/utils/imagePreviewSource.ts");
-const { createUploadFormData, uploadImage, transformImage, refreshImageLinks, getImageById, getImages, getImageArchive, deleteImage } = await vite.ssrLoadModule("/src/api/images.ts");
+const { createUploadFormData, uploadImage, transformImage, refreshImageLinks, getImageById, getImages, getImageArchive, deleteImage, getFavoriteImages, setImageFavorite } = await vite.ssrLoadModule("/src/api/images.ts");
 const history = await vite.ssrLoadModule("/src/utils/imageHistory.ts");
 const { apiClient } = await vite.ssrLoadModule("/src/api/client.ts");
 const { tokenStorage } = await vite.ssrLoadModule("/src/auth/tokenStorage.ts");
@@ -36,14 +36,14 @@ const png = () => new File([pngBytes], "photo.png", { type: "image/png" });
 const original = {
   _id: "66e83a109af861ce27c86a02", user: "66e83a109af861ce27c86a01", kind: "original",
   originalName: "photo.png", filename: "original.png", format: "png", mimeType: "image/png",
-  path: "originals/user/original.png", originalKey: "originals/user/original.png", originalSize: 1000,
+  isFavorite: false, originalSize: 1000,
   url: "https://storage.example.test/original.png?signature=test",
   downloadUrl: "https://storage.example.test/original.png?attachment=test",
   urlExpiresAt: "2099-01-01T00:00:00.000Z", createdAt: "2026-09-20T00:00:00.000Z", updatedAt: "2026-09-20T00:00:00.000Z",
 };
 const processed = {
   ...original, _id: "66e83a109af861ce27c86a03", kind: "transformed", originalImageId: original._id,
-  format: "webp", filename: "version.webp", path: "transformed/user/original/version.webp",
+  format: "webp", filename: "version.webp",
   width: 20, height: 10, quality: 80, processedSize: 400,
   url: "https://storage.example.test/version.webp?signature=test", downloadUrl: "https://storage.example.test/version.webp?attachment=test",
   transformations: { format: "webp", quality: 80 },
@@ -222,7 +222,7 @@ test("maps HTTP and network failures to safe messages without leaking backend in
   }
   assert.match(getImageErrorMessage(httpError(413)), /5,242,880/);
   assert.match(getImageErrorMessage(httpError(422)), /decoded/);
-  assert.match(getImageErrorMessage(httpError(429)), /Wait a minute/);
+  assert.match(getImageErrorMessage(httpError(429)), /Try again in 60 seconds/);
   assert.match(getImageErrorMessage(new AxiosError("private", "ERR_NETWORK")), /network or CORS/);
   assert.match(getImageErrorMessage(new AxiosError("private", "ECONNABORTED")), /may have been saved/);
 });
@@ -832,4 +832,206 @@ test("history error messages describe reads/deletes and never expose server inte
   assert.match(getImageErrorMessage(httpError(502), "delete"), /Some files may have been removed/);
   assert.match(getImageErrorMessage(new AxiosError("private", "ERR_NETWORK"), "delete"), /already have been deleted/);
   assert.match(getImageErrorMessage(new AxiosError("private", "ERR_NETWORK"), "load"), /network or CORS/);
+});
+
+const { createFavoriteState, favoriteState } = await vite.ssrLoadModule("/src/utils/favorites.ts");
+const { toggleFavorite } = await vite.ssrLoadModule("/src/hooks/useFavorites.ts");
+const { getRetryAfterDeadline } = await vite.ssrLoadModule("/src/api/imageErrors.ts");
+const { default: FavoriteButton } = await vite.ssrLoadModule("/src/components/images/FavoriteButton.tsx");
+
+test("favorites list uses exact pagination, signed metadata and Bearer authorization", async () => {
+  tokenStorage.setToken("favorites-token");
+  apiClient.defaults.adapter = async (config) => {
+    assert.equal(config.url, "/api/images/favorites");
+    assert.equal(apiClient.getUri(config), "https://api.example.test/api/images/favorites?page=2&limit=10");
+    assert.equal(config.headers.get("Authorization"), "Bearer favorites-token");
+    assert.deepEqual(config.params, { page: 2, limit: 10 });
+    return response(config, pageResponse([{ ...processed, isFavorite: true }], 2, 10, 11));
+  };
+  const page = await getFavoriteImages(2, 10);
+  assert.equal(page.total, 11);
+  assert.equal(page.totalPages, 2);
+  assert.equal(page.items[0].isFavorite, true);
+  assert.equal(page.items[0].downloadUrl, processed.downloadUrl);
+  assert.equal("path" in page.items[0], false);
+  assert.equal("originalKey" in page.items[0], false);
+});
+
+test("favorite mutations send no body, encode IDs, and reconcile validated responses", async () => {
+  tokenStorage.setToken("favorites-token");
+  for (const value of [true, false]) {
+    apiClient.defaults.adapter = async (config) => {
+      assert.equal(config.url, `/api/images/${original._id}/favorite`);
+      assert.equal(config.method, value ? "put" : "delete");
+      assert.equal(config.data, undefined);
+      assert.equal(config.headers.get("Authorization"), "Bearer favorites-token");
+      return response(config, { imageId: original._id, isFavorite: value }, 200);
+    };
+    assert.deepEqual(await setImageFavorite(original._id, value, signal()), { imageId: original._id, isFavorite: value });
+  }
+  apiClient.defaults.adapter = async (config) => {
+    assert.equal(config.url, "/api/images/a%2Fb/favorite");
+    return response(config, { imageId: "a/b", isFavorite: true });
+  };
+  await setImageFavorite("a/b", true, signal());
+  for (const data of [null, {}, { imageId: processed._id, isFavorite: true }, { imageId: original._id, isFavorite: "true" }]) {
+    apiClient.defaults.adapter = async (config) => response(config, data);
+    await assert.rejects(setImageFavorite(original._id, true, signal()), /could not be confirmed/);
+  }
+});
+
+test("favorites accepts empty and beyond-end pages, rejects invalid pagination and nonfavorites", async () => {
+  for (const [page, total] of [[1, 0], [4, 11]]) {
+    apiClient.defaults.adapter = async (config) => response(config, pageResponse([], page, 10, total));
+    const result = await getFavoriteImages(page);
+    assert.equal(result.totalPages, Math.ceil(total / 10));
+    assert.equal(history.validHistoryPage(result), total ? 2 : 1);
+  }
+  for (const [page, limit] of [[0, 10], [100001, 10], [1, 51], [1, 1.5]]) {
+    apiClient.defaults.adapter = async () => assert.fail("Invalid request reached transport");
+    await assert.rejects(getFavoriteImages(page, limit), /valid image page/);
+  }
+  apiClient.defaults.adapter = async (config) => response(config, pageResponse([original]));
+  await assert.rejects(getFavoriteImages(), /incomplete image history/);
+});
+
+test("optimistic state deduplicates clicks and protects against reads begun before or during a mutation", () => {
+  const state = createFavoriteState();
+  const before = state.read();
+  const request = state.begin(original);
+  const during = state.read();
+  assert.equal(state.getSnapshot().values.get(original._id).value, true);
+  assert.equal(state.begin(original), null);
+  assert.equal(state.accept([original], before)[0].isFavorite, true);
+  assert.equal(state.accept([original], during)[0].isFavorite, true);
+  state.finish(request, true);
+  assert.equal(state.accept([original], during)[0].isFavorite, true);
+  assert.equal(state.getSnapshot().pending, 0);
+  assert.equal(state.accept([original], state.read())[0].isFavorite, false, "Fresh server reads remain authoritative");
+});
+
+test("parallel removals roll back independently without reordering retained records", () => {
+  const state = createFavoriteState();
+  const images = [version2, processed, original].map((image) => ({ ...image, isFavorite: true }));
+  state.accept(images, state.read());
+  const first = state.begin(images[0]);
+  const second = state.begin(images[1]);
+  const visible = () => images.filter((image) => state.getSnapshot().values.get(image._id).value).map((image) => image._id);
+  assert.deepEqual(visible(), [original._id]);
+  state.finish(first, first.previous, "Failed");
+  assert.deepEqual(visible(), [version2._id, original._id]);
+  state.finish(second, false);
+  assert.deepEqual(visible(), [version2._id, original._id]);
+  assert.equal(state.getSnapshot().pending, 0);
+});
+
+test("session changes abort mutations and ignore old reads, successes, and failures", () => {
+  const state = createFavoriteState();
+  const ticket = state.read();
+  const old = state.begin(original);
+  state.clear();
+  assert.equal(old.controller.signal.aborted, true);
+  state.accept([{ ...original, isFavorite: true }], ticket);
+  state.finish(old, true);
+  state.finish(old, false, "Old account error");
+  assert.equal(state.getSnapshot().values.size, 0);
+  assert.equal(state.getSnapshot().error, null);
+  const next = state.begin(original);
+  state.finish(old, true);
+  assert.equal(state.getSnapshot().values.get(original._id).pending, next.controller);
+});
+
+test("deferred list cannot overwrite a successful optimistic toggle", async () => {
+  let resolveList;
+  let listStarted;
+  const started = new Promise((resolve) => { listStarted = resolve; });
+  apiClient.defaults.adapter = (config) => {
+    if (config.method === "get") return new Promise((resolve) => { resolveList = () => resolve(response(config, pageResponse([original]))); listStarted(); });
+    return Promise.resolve(response(config, { imageId: original._id, isFavorite: true }));
+  };
+  const pendingList = getImages();
+  await started;
+  await toggleFavorite(original);
+  resolveList();
+  const result = await pendingList;
+  assert.equal(result.items[0].isFavorite, true);
+  assert.equal(favoriteState.getSnapshot().values.get(original._id).value, true);
+});
+
+test("toggle rolls back on failures, sends once while pending and trusts mutation response", async () => {
+  let rejectMutation;
+  let calls = 0;
+  let mutationStarted;
+  const started = new Promise((resolve) => { mutationStarted = resolve; });
+  apiClient.defaults.adapter = (config) => new Promise((resolve, reject) => {
+    calls++;
+    rejectMutation = () => reject(httpError(500, config));
+    mutationStarted();
+  });
+  const pending = toggleFavorite(original);
+  await started;
+  assert.equal(favoriteState.getSnapshot().values.get(original._id).value, true);
+  await toggleFavorite(original);
+  assert.equal(calls, 1);
+  rejectMutation();
+  await pending;
+  assert.equal(favoriteState.getSnapshot().values.get(original._id).value, false);
+  assert.match(favoriteState.getSnapshot().error, /undone/);
+  apiClient.defaults.adapter = async (config) => response(config, { imageId: original._id, isFavorite: false });
+  await toggleFavorite(original);
+  assert.equal(favoriteState.getSnapshot().values.get(original._id).value, false);
+});
+
+test("rate limiting honors seconds and HTTP dates and never replays mutations", async () => {
+  const error = httpError(429);
+  const now = Date.parse("2026-09-30T12:00:00Z");
+  error.response.headers.set("Retry-After", "120");
+  assert.equal(getRetryAfterDeadline(error, now), now + 120000);
+  error.response.headers.set("Retry-After", "Wed, 30 Sep 2026 12:03:00 GMT");
+  assert.equal(getRetryAfterDeadline(error, now), now + 180000);
+  error.response.headers.delete("Retry-After");
+  assert.equal(getRetryAfterDeadline(error, now), now + 60000);
+  let calls = 0;
+  apiClient.defaults.adapter = async (config) => {
+    calls++;
+    const failure = httpError(429, config);
+    failure.response.headers.set("Retry-After", "120");
+    throw failure;
+  };
+  await toggleFavorite(original);
+  await toggleFavorite(original);
+  await assert.rejects(getFavoriteImages(), /Wait before trying again/);
+  assert.equal(calls, 1);
+  assert.equal(favoriteState.getSnapshot().values.get(original._id).value, false);
+  assert.match(favoriteState.getSnapshot().error, /120 seconds/);
+  tokenStorage.setToken("new-account");
+  assert.equal(favoriteState.getSnapshot().retryAt, 0);
+  assert.equal(favoriteState.getSnapshot().values.size, 0);
+});
+
+test("favorites preserve expiry handling and cancellation", async () => {
+  for (const send of [() => getFavoriteImages(), () => setImageFavorite(original._id, true, signal()), () => setImageFavorite(original._id, false, signal())]) {
+    tokenStorage.setToken("expired-favorite-token");
+    apiClient.defaults.adapter = async (config) => { throw httpError(401, config); };
+    await assert.rejects(send());
+    assert.equal(tokenStorage.getToken(), null);
+    assert.equal(favoriteState.getSnapshot().values.size, 0);
+  }
+  const controller = new AbortController();
+  controller.abort();
+  apiClient.defaults.adapter = async () => assert.fail("Canceled transport ran");
+  await assert.rejects(getFavoriteImages(1, 10, controller.signal));
+  await assert.rejects(setImageFavorite(original._id, true, controller.signal));
+});
+
+test("favorite controls expose state, accessible names and pending disabled state", () => {
+  const render = () => renderToStaticMarkup(createElement(FavoriteButton, { image: original }));
+  assert.match(render(), /aria-pressed="false"/);
+  assert.match(render(), /aria-label="Add to favorites: photo.png"/);
+  const request = favoriteState.begin(original);
+  assert.match(render(), /aria-pressed="true"/);
+  assert.match(render(), /aria-label="Remove from favorites: photo.png"/);
+  assert.match(render(), /disabled=""/);
+  favoriteState.finish(request, true);
+  assert.doesNotMatch(render(), /disabled=""/);
 });

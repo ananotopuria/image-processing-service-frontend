@@ -1,12 +1,21 @@
 import axios from "axios";
 import { ImageInputError } from "../utils/images";
 
-export function getImageErrorMessage(error: unknown, operation: "process" | "load" | "delete" = "process"): string {
+export function getImageErrorMessage(error: unknown, operation: "process" | "load" | "delete" | "favorite" = "process"): string {
   if (error instanceof ImageInputError) return error.message;
   if (!axios.isAxiosError(error)) return operation === "process" ? "We could not process this image. Please try again." : "We could not complete this image request. Please try again.";
   if (import.meta.env.DEV) {
     // Never log request headers, tokens, file bytes, or signed S3 URLs.
     console.debug("Image request failed", { status: error.response?.status, code: error.code });
+  }
+  if (operation === "favorite") {
+    if (error.response?.status === 401) return "Your session has expired. Please sign in again.";
+    if (error.response?.status === 404) return "This image is no longer available to your account. Refresh the gallery.";
+    if (error.response?.status !== 429) return "Could not update this favorite. The change was undone. Refresh to check its saved state, or try again.";
+  }
+  if (error.response?.status === 429) {
+    const seconds = Math.max(1, Math.ceil(((getRetryAfterDeadline(error) ?? Date.now() + 60000) - Date.now()) / 1000));
+    return `Too many image requests. Try again in ${seconds} seconds.`;
   }
   if (!error.response) {
     const timedOut = error.code === "ECONNABORTED" || error.code === "ETIMEDOUT";
@@ -47,4 +56,14 @@ export function getImageErrorMessage(error: unknown, operation: "process" | "loa
   };
   // Fixed messages map verified backend errors without exposing arbitrary internals.
   return messages[status] ?? "The image service is unavailable right now. Please try again later.";
+}
+
+// Retry-After may be delta-seconds or an HTTP date. No automatic mutation retries.
+export function getRetryAfterDeadline(error: unknown, now = Date.now()): number | null {
+  if (!axios.isAxiosError(error) || error.response?.status !== 429) return null;
+  const raw = Object.entries(error.response.headers).find(([name]) => name.toLowerCase() === "retry-after")?.[1];
+  const value = typeof raw === "number" || typeof raw === "string" ? String(raw).trim() : "";
+  if (/^\d+(\.\d+)?$/.test(value)) return now + Number(value) * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(now, date) : now + 60000;
 }
