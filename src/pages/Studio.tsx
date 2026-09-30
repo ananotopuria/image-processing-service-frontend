@@ -1,21 +1,41 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useSavedEditorScroll } from "../hooks/useReprocessingScroll";
+import { tokenStorage } from "../auth/tokenStorage";
+import { useSavedOriginal } from "../hooks/useSavedOriginal";
+import SavedOriginalPreview from "../components/images/SavedOriginalPreview";
+import { withoutSavedOriginal } from "../utils/reprocessing";
+import { processStudioSource } from "../api/studio";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { ArrowRight, LoaderCircle } from "lucide-react";
-import { Link } from "react-router-dom";
-import { refreshImageLinks, transformImage, uploadImage } from "../api/images";
+import { Link, useSearchParams } from "react-router-dom";
+import { refreshImageLinks } from "../api/images";
 import { getImageErrorMessage } from "../api/imageErrors";
 import type { ImageMetadata, TransformationSettings } from "../api/images.types";
 import ImageDropzone from "../components/images/ImageDropzone";
 import type { SelectedImage } from "../components/images/ImagePreview";
 import TransformationControls from "../components/images/TransformationControls";
 import ProcessingResult from "../components/images/ProcessingResult";
-import { buildTransformRequest, createDefaultSettings, prepareImagePreview } from "../utils/images";
+import { buildTransformRequest, createDefaultSettings, ImageInputError, prepareImagePreview } from "../utils/images";
 import { resetCropForImage } from "../utils/crop";
 import ServiceStatus from "../components/ServiceStatus";
 
 function Studio() {
+  const [search, setSearch] = useSearchParams();
+  const token = useSyncExternalStore(tokenStorage.subscribe, tokenStorage.getToken, () => null);
+  const ids = search.getAll("originalId");
+  const originalId = ids.length === 0 ? null : ids.length === 1 ? ids[0] : "";
+  // URL and account changes discard controls, results, in-flight work and blob URLs.
+  return <StudioWorkspace key={JSON.stringify([token, originalId])} savedOriginalId={originalId}
+    onUploadNew={() => setSearch(withoutSavedOriginal(search), { replace: true })} />;
+}
+
+function StudioWorkspace({ savedOriginalId, onUploadNew }: { savedOriginalId: string | null; onUploadNew: () => void }) {
+  const savedMode = savedOriginalId !== null;
+  const saved = useSavedOriginal(savedOriginalId);
+  const editor = useRef<HTMLFormElement>(null);
+  useSavedEditorScroll(editor, savedOriginalId);
   const [selected, setSelected] = useState<SelectedImage | null>(null);
   const [settings, setSettings] = useState<TransformationSettings>(createDefaultSettings);
-  const [original, setOriginal] = useState<ImageMetadata | null>(null);
+  const [uploadedOriginal, setUploadedOriginal] = useState<ImageMetadata | null>(null);
   const [result, setResult] = useState<ImageMetadata | null>(null);
   const [phase, setPhase] = useState<"idle" | "checking" | "uploading" | "processing" | "refreshing">("idle");
   const [error, setError] = useState("");
@@ -23,7 +43,10 @@ function Studio() {
   const request = useRef<AbortController | null>(null);
   const previewUrl = useRef<string | null>(null);
   const selectionVersion = useRef(0);
-  const busy = phase !== "idle";
+  const original = savedMode ? saved.original : uploadedOriginal;
+  const editorImage = savedMode ? saved.preview : selected;
+  const busy = phase !== "idle" || saved.loading;
+  const canProcess = savedMode ? Boolean(saved.original) : Boolean(selected);
 
   useEffect(() => () => {
     selectionVersion.current++;
@@ -32,12 +55,13 @@ function Studio() {
   }, []);
 
   function clearSelection() {
+    if (savedMode) { onUploadNew(); return; }
     selectionVersion.current++;
     if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
     previewUrl.current = null;
     setSelected(null);
     setSettings((current) => resetCropForImage(current));
-    setOriginal(null);
+    setUploadedOriginal(null);
     setResult(null);
     setError("");
     setProcessFailed(false);
@@ -57,7 +81,7 @@ function Studio() {
       setSelected(image);
       setProcessFailed(false);
       setSettings((current) => resetCropForImage(current, image));
-      setOriginal(null);
+      setUploadedOriginal(null);
       setResult(null);
     } catch (error: unknown) {
       if (version === selectionVersion.current) setError(getImageErrorMessage(error));
@@ -69,7 +93,7 @@ function Studio() {
   async function processImage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    if (request.current || busy || !selected) return;
+    if (request.current || busy || !canProcess) return;
     // Reveal invalid controls even if their editor section is collapsed.
     if (!form.checkValidity()) {
       const invalid = form.querySelector<HTMLInputElement>("input:invalid");
@@ -85,16 +109,14 @@ function Studio() {
     setError("");
     setProcessFailed(false);
     try {
-      const body = buildTransformRequest(settings, selected);
-      let source = original;
-      if (!source) {
-        setPhase("uploading");
-        source = await uploadImage(selected.file, controller.signal);
-        if (controller.signal.aborted) return;
-        setOriginal(source);
-      }
-      setPhase("processing");
-      const processed = await transformImage(source._id, body, controller.signal);
+      if (settings.cropEnabled && !editorImage) throw new ImageInputError("Load the original preview before cropping, or turn crop off.");
+      const body = buildTransformRequest(settings, editorImage ?? undefined);
+      const source = savedMode
+        ? { kind: "saved" as const, original: saved.original! }
+        : { kind: "file" as const, file: selected!.file, original: uploadedOriginal };
+      const processed = await processStudioSource(source, body, controller.signal, {
+        onOriginal: setUploadedOriginal, onPhase: setPhase,
+      });
       if (!controller.signal.aborted) setResult(processed);
     } catch (error: unknown) {
       if (!controller.signal.aborted) {
@@ -131,11 +153,17 @@ function Studio() {
       <div className="flex flex-wrap justify-between gap-3 border-b border-archive-line pb-5 font-mono text-[11px] text-muted-ink"><span>MOTHFRAME / THE WORKSPACE</span><span>ORIGINAL → TRANSFORM → PRESERVE</span></div>
       <h1 id="upload-title" className="mt-8 font-editorial text-[40px] leading-[1.1] sm:text-[56px]">Give your image a new form.</h1>
       <p className="mt-4 max-w-xl text-[15px] leading-[1.8] text-muted-ink">Crop, resize, rotate, and refine. Shape your image with a considered set of tools, then save a new version.</p>
+      {savedMode && <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-y border-archive-line py-3">
+        <p className="text-sm text-muted-ink">Editing a saved original. Each process creates a new version.</p>
+        <button type="button" onClick={onUploadNew} className="min-h-11 cursor-pointer text-sm underline">Upload a new image</button>
+      </div>}
       {!result && (
-        <form onSubmit={processImage} noValidate className="mt-10 grid items-start gap-8 lg:grid-cols-[1.2fr_1fr] lg:gap-x-12 lg:gap-y-8" aria-busy={busy}>
+        <form id="image-editor" ref={editor} onSubmit={processImage} noValidate className="mt-10 scroll-mt-6 grid items-start gap-8 lg:grid-cols-[1.2fr_1fr] lg:gap-x-12 lg:gap-y-8" aria-busy={busy}>
           <section aria-labelledby="original-title" className="min-w-0">
             <h2 id="original-title" className="mb-4 font-mono text-[11px]">01 / ORIGINAL IMAGE</h2>
-            <ImageDropzone image={selected} disabled={busy} onSelect={selectImage} onRemove={clearSelection} />
+            {savedMode ? <SavedOriginalPreview original={saved.original} preview={saved.preview} loading={saved.loading} previewLoading={saved.previewLoading}
+              error={saved.error} previewError={saved.previewError} disabled={phase !== "idle"} onRetry={saved.refresh} />
+              : <ImageDropzone image={selected} disabled={busy} onSelect={selectImage} onRemove={clearSelection} />}
             <div className="mt-4 flex flex-col gap-3 text-muted-ink">
               <p className="font-mono text-[11px] leading-relaxed">ORIGINAL PREVIEW · CHANGES APPEAR AFTER PROCESSING</p>
               <p className="text-xs leading-relaxed">The preview uses the original pixel orientation so crop coordinates match processing. Camera rotation tags are ignored; use Orientation to rotate the result. Animated images use the first frame when processed.</p>
@@ -143,7 +171,7 @@ function Studio() {
           </section>
           <section aria-labelledby="settings-title" className="min-w-0">
             <h2 id="settings-title" className="mb-4 font-mono text-[11px]">02 / DEFINE THE NEW FORM</h2>
-            <TransformationControls settings={settings} image={selected} disabled={busy} onChange={(next) => { setSettings(next); setError(""); }} onReset={() => { setSettings(createDefaultSettings()); setError(""); }} />
+            <TransformationControls settings={settings} image={editorImage} disabled={busy || (savedMode && !saved.original)} onChange={(next) => { setSettings(next); setError(""); }} onReset={() => { setSettings(createDefaultSettings()); setError(""); }} />
           </section>
           <div className="flex flex-col gap-5 border-t border-archive-line pt-6 sm:flex-row sm:items-center sm:justify-between lg:col-span-2">
             <div className="flex min-w-0 max-w-lg flex-col gap-2 text-xs leading-relaxed text-muted-ink">
@@ -151,8 +179,8 @@ function Studio() {
               <p>The original is preserved. Each successful process saves a separate version.</p>
               {original && <p>Your original is saved. Retrying uses that original without uploading it again.</p>}
             </div>
-            <button type="submit" disabled={!selected || busy} className="flex min-h-12 w-full shrink-0 cursor-pointer items-center justify-between gap-6 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">
-              {busy ? status : processFailed ? original ? "Retry processing" : "Retry upload and process" : "Process image"}
+            <button type="submit" disabled={!canProcess || busy || (settings.cropEnabled && !editorImage)} className="flex min-h-12 w-full shrink-0 cursor-pointer items-center justify-between gap-6 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">
+              {busy ? saved.loading ? "Loading original…" : status : processFailed ? original ? "Retry processing" : "Retry upload and process" : "Process image"}
               {busy ? <LoaderCircle size={18} aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ArrowRight size={18} aria-hidden="true" />}
             </button>
           </div>
@@ -162,6 +190,7 @@ function Studio() {
       <ServiceStatus />
       <div role="alert" aria-atomic="true">{error && <p className="mt-4 border-l-2 border-ink bg-specimen-paper px-4 py-3 text-sm leading-relaxed">{error}</p>}</div>
       {result && <ProcessingResult key={`${result._id}:${result.urlExpiresAt}:${result.url}`} image={result} refreshing={phase === "refreshing"} onRefresh={refreshLinks} onReset={() => { clearSelection(); setSettings(createDefaultSettings()); }} />}
+      {result && <Link to="/images" className="mt-6 mr-6 inline-flex min-h-11 items-center gap-2 text-sm underline">View original and versions in Images <ArrowRight size={16} aria-hidden="true" /></Link>}
       <Link to="/dashboard" className="mt-6 inline-flex min-h-11 items-center text-sm underline">Back to dashboard</Link>
     </section>
   );

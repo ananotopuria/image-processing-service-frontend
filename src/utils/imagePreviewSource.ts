@@ -1,7 +1,7 @@
 // Remove EXIF only from a temporary preview Blob. No pixels are cropped or
 // re-encoded, and the original File is still sent byte-for-byte to the backend.
 // This makes browser orientation match Sharp's raw decode (no auto-orientation).
-export async function imagePreviewSource(file: File, mimeType: string): Promise<Blob> {
+export async function imagePreviewSource(file: Blob, mimeType: string): Promise<Blob> {
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   const view = new DataView(buffer);

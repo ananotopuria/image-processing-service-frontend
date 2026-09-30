@@ -1,3 +1,4 @@
+import { useRestoreReprocessingScroll } from "../hooks/useReprocessingScroll";
 import { tokenStorage } from "../auth/tokenStorage";
 import { useFavoriteImages } from "../hooks/useFavoriteImages";
 import { useFavorites } from "../hooks/useFavorites";
@@ -27,6 +28,7 @@ function ImageArchive() {
   const active = view === "all" ? all : favorites;
   const { loading, error, setPage } = active;
   const data = active.data;
+  useRestoreReprocessingScroll(Boolean(data) && !loading);
   const refresh = () => { all.refresh(); favorites.refresh(); };
   const showingFavorites = view === "favorites";
   const [selected, setSelected] = useState<ImageMetadata | null>(null);

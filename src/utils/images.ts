@@ -22,7 +22,7 @@ export function isImageFormat(value: unknown): value is ImageFormat {
 }
 
 // The backend detects MIME from bytes, not the extension or browser MIME header.
-export async function validateImageFile(file: File): Promise<string> {
+export async function validateImageFile(file: Blob): Promise<string> {
   if (!file.size) throw new ImageInputError("This file is empty. Choose a valid image.");
   if (file.size >= MAX_IMAGE_BYTES) {
     throw new ImageInputError("Choose an image smaller than 5 MiB (5,242,880 bytes).");
@@ -36,6 +36,11 @@ export async function validateImageFile(file: File): Promise<string> {
 }
 
 export async function prepareImagePreview(file: File) {
+  return { file, ...await preparePreview(file) };
+}
+
+// Local and saved previews use the same raw pixel orientation as the backend.
+export async function preparePreview(file: Blob) {
   const mimeType = await validateImageFile(file);
   const url = URL.createObjectURL(await imagePreviewSource(file, mimeType));
   try {
@@ -43,7 +48,7 @@ export async function prepareImagePreview(file: File) {
     image.src = url;
     await image.decode();
     if (!image.naturalWidth || !image.naturalHeight) throw new Error("No image dimensions");
-    return { file, url, mimeType, width: image.naturalWidth, height: image.naturalHeight };
+    return { url, mimeType, width: image.naturalWidth, height: image.naturalHeight };
   } catch {
     URL.revokeObjectURL(url);
     throw new ImageInputError("This image could not be opened. It may be damaged. Choose another image.");

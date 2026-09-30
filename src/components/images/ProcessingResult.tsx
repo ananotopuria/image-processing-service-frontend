@@ -39,7 +39,9 @@ export default function ProcessingResult({ image, refreshing, onRefresh, onReset
           ) : <p className="max-w-sm text-center text-sm leading-relaxed text-muted-ink">{expired ? "The preview link has expired. Refresh the links to view your image again." : "Your image was processed, but its preview is unavailable. Refresh the links to try again."}</p>}
         </div>
         <div className="min-w-0">
-          <p className="wrap-anywhere text-sm font-semibold">{image.originalName}</p>
+          <p className="font-mono text-[10px] text-muted-ink">PROCESSED FILE</p>
+          <p className="mt-2 wrap-anywhere text-sm font-semibold">{image.filename}</p>
+          <p className="mt-3 wrap-anywhere text-xs text-muted-ink">Source original: {image.originalName}</p>
           <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-6 border-y border-archive-line py-6 text-sm">
             {[
               ["FORMAT", image.format.toUpperCase()],
@@ -57,7 +59,7 @@ export default function ProcessingResult({ image, refreshing, onRefresh, onReset
             </ul>
           </div>}
           <div className="mt-6 flex flex-wrap gap-4">
-            {downloadUrl && !expired && <a href={downloadUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-12 items-center gap-3 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover"><Download size={16} aria-hidden="true" /> Download image<span className="sr-only"> (opens in a new tab)</span></a>}
+            {downloadUrl && !expired && <a href={downloadUrl} download={image.filename} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-12 items-center gap-3 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover"><Download size={16} aria-hidden="true" /> Download image<span className="sr-only"> (opens in a new tab)</span></a>}
             {url && !expired && <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-12 items-center gap-2 text-sm underline">View image <ExternalLink size={15} aria-hidden="true" /><span className="sr-only"> (opens in a new tab)</span></a>}
           </div>
           <p className="mt-4 text-xs leading-relaxed text-muted-ink">Image links are temporary and last up to 15 minutes. Refresh them here if access expires.</p>

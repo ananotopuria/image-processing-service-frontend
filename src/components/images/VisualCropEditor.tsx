@@ -1,10 +1,10 @@
 import ReactCrop from "react-image-crop";
 import type { TransformationSettings } from "../../api/images.types";
 import { cropFields, initialCrop, percentCropToPixels, pixelsToPercentCrop, settingsCrop } from "../../utils/crop";
-import type { SelectedImage } from "./ImagePreview";
+import type { EditorImage } from "./ImagePreview";
 
 interface VisualCropEditorProps {
-  image: SelectedImage;
+  image: EditorImage;
   settings: TransformationSettings;
   disabled: boolean;
   onChange: (settings: TransformationSettings) => void;

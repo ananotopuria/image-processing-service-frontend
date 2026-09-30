@@ -165,8 +165,7 @@ access links. Object IDs serialize as strings. Storage keys are omitted. The cur
 ```
 
 The transform response contains those common fields, with `kind: "transformed"`,
-output `filename`, `mimeType`, `format`, and a `path` of
-`transformed/{userId}/{originalId}/{uuid}.{format}`. It also contains:
+output `filename`, `mimeType`, and `format`. Storage keys are not exposed. It also contains:
 
 ```ts
 {
@@ -456,3 +455,61 @@ duplicate clicks; stale reads cannot overwrite newer changes. State lives only i
 memory, clears on token changes, and ignores earlier sessions. Fresh reads remain
 authoritative. Rate limits respect Retry-After seconds or HTTP dates (60 seconds
 when absent), with manual retry and no automatic mutation replay.
+
+
+## Reprocessing saved originals
+
+Verified read-only against local backend commit `e86defb`: `images.controller.ts`,
+`images.service.ts`, `dto/image-response.dto.ts`, `dto/transform-image.dto.ts`, and
+`s3/s3.service.ts`. No backend files were changed.
+
+- `GET /api/images/:id` returns one owned image, including `kind`,
+  `originalImageId` on versions, `originalName`, generated `filename`, `format`,
+  sizes, `isFavorite`, and `url` / `downloadUrl` / `urlExpiresAt`.
+- `POST /api/images/:originalId/transform` accepts the existing nested
+  `{ transformations: { crop?, resize?, flip?, mirror?, rotate?, filters?, quality?, format? } }`
+  JSON and saves a separate version. The backend rejects transformed IDs (400)
+  and legacy originals without preserved bytes (409). Invalid, absent, or unowned
+  images return 404; authentication expiry remains handled by the shared client.
+- An original card links using its `_id`; a version uses `originalImageId`, the
+  same relationship as archive grouping. No filename-based inference or fallback
+  to the version ID is used. Records without an identifiable original show an
+  unavailable explanation. Studio fetches and verifies `kind: "original"` before
+  enabling processing, even when the query parameter was entered manually.
+
+The durable source URL is `/upload?originalId=<id>`. The `/studio` alias preserves
+its query string when redirecting. Refresh/direct navigation fetches the source
+again. Account/source changes remount the workspace, abort metadata, preview and
+processing work, and dispose object URLs. **Upload a new image** removes only
+`originalId` and resets editor/result state.
+
+Saved processing sends only the transform POST; it cannot enter the upload path.
+New-file processing retains upload → transform and reuses a successful upload
+when retrying a failed transform. Both paths use the same editor validation and
+result component. Output `filename`, format, dimensions and size come from the
+new response, with the source original's name separately labeled. New versions
+are not automatically favorited. **View original and versions in Images** mounts
+the existing archive loader, fetching and grouping fresh server data; there is
+no persistent history cache to invalidate.
+
+Original responses do not include pixel dimensions, and Sharp ignores EXIF
+orientation. The saved preview therefore fetches the signed URL **for preview
+only**, without credentials or API headers, and reuses the existing EXIF-removal
+and decode helpers to obtain accurate crop coordinates. It never creates a File
+or reuploads these bytes. Storage must permit browser CORS reads for this crop
+preview. A failed or timed-out preview leaves non-crop processing available and
+provides a manual retry that gets fresh signed links; it never retries in a loop.
+Temporary preview Blob URLs are revoked on refresh, source changes, cancellation
+and unmount. Result previews/downloads retain their signed-link refresh action.
+
+Manual checks (requires a running backend, owned images and browser access):
+
+- Open an original from Images, process, and confirm only a transform POST occurs.
+- Open a version and confirm the URL targets its original, not the version.
+- Refresh the saved Studio URL; verify the same source reloads.
+- Try a missing/unowned ID or a version ID directly; processing stays disabled.
+- Retry a failed preview; verify no request loop and crop remains unavailable until decoded.
+- Switch to uploading; confirm the source parameter, old controls and result clear.
+- Process a new file; verify upload then transform still works.
+- Check the result's actual output filename/format and return to Images to see the
+  version grouped under its source, without inheriting that source's favorite.
