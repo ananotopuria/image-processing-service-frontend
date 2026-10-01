@@ -12,7 +12,7 @@ export function activateModal(dialog: HTMLDialogElement, initialFocus: HTMLEleme
 
   function trapFocus(event: KeyboardEvent) {
     if (event.key !== "Tab") return;
-    const controls = Array.from(dialog.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex="0"]'));
+    const controls = Array.from(dialog.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]'));
     const first = controls[0];
     const last = controls.at(-1);
     if (!first || !last) { event.preventDefault(); return; }

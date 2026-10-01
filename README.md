@@ -125,6 +125,7 @@ npm run lint
 npm run test:auth
 npm run test:images
 npm run test:pricing
+npm run test:sharing
 ```
 
 Tests use synthetic images, test-only account data, fake timers, and mocked API
@@ -153,7 +154,8 @@ temporary browser preview removes EXIF orientation metadata to match the backend
 raw orientation; the uploaded file remains untouched. The browser does not crop
 or encode a replacement upload.
 
-See [authentication details](docs/authentication.md) and
+See [sharing integration and two-account checks](docs/image-sharing.md),
+[authentication details](docs/authentication.md), and
 [the image-processing contract](docs/image-processing.md) for schemas, validation,
 lifecycle behavior, and limitations.
 

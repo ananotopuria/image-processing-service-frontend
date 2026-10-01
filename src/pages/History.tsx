@@ -1,3 +1,5 @@
+import ShareHistory from "../components/sharing/ShareHistory";
+import ShareImageDialog from "../components/sharing/ShareImageDialog";
 import InfiniteImageLoader from "../components/images/InfiniteImageLoader";
 import { useRestoreReprocessingScroll } from "../hooks/useReprocessingScroll";
 import { tokenStorage } from "../auth/tokenStorage";
@@ -6,7 +8,7 @@ import { useFavorites } from "../hooks/useFavorites";
 import ImageHistoryItem from "../components/images/ImageHistoryItem";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowRight, RefreshCw } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { deleteImage } from "../api/images";
 import type { ImageMetadata } from "../api/images.types";
 import { getImageErrorMessage } from "../api/imageErrors";
@@ -22,7 +24,12 @@ function History() {
 }
 
 function ImageArchive() {
-  const [view, setView] = useState<"all" | "favorites">("all");
+  const [search, setSearch] = useSearchParams();
+  const requestedView = search.get("view");
+  const view = requestedView === "favorites" || requestedView === "received" || requestedView === "sent" ? requestedView : "all";
+  const showingShares = view === "received" || view === "sent";
+  const [shareTarget, setShareTarget] = useState<{ image: ImageMetadata; trigger: HTMLElement } | null>(null);
+  const share = (image: ImageMetadata, trigger: HTMLElement) => setShareTarget({ image, trigger });
   const all = useGroupedImageHistory(view === "all");
   const favorites = useFavoriteImages(view === "favorites");
   const favoriteState = useFavorites();
@@ -71,13 +78,14 @@ function ImageArchive() {
         </div>
         <Link to="/upload" className="inline-flex min-h-12 shrink-0 items-center gap-5 rounded-sm bg-ink px-5 py-3 text-sm text-paper hover:bg-ink-hover">Upload image <ArrowRight size={17} aria-hidden="true" /></Link>
       </div>
-      <div role="group" aria-label="Image collection" className="mt-7 flex gap-2">
-        {(["all", "favorites"] as const).map((nextView) => <button key={nextView} type="button" aria-pressed={view === nextView}
-          onClick={() => { if (view !== nextView) { all.pause(); favorites.setPage(1); favorites.refresh(); setView(nextView); setNotice(""); } }}
+      <div role="group" aria-label="Image collection" className="mt-7 flex flex-wrap gap-2">
+        {(["all", "favorites", "received", "sent"] as const).map((nextView) => <button key={nextView} type="button" aria-pressed={view === nextView}
+          onClick={() => { if (view !== nextView) { all.pause(); favorites.setPage(1); favorites.refresh(); setSearch(nextView === "all" ? {} : { view: nextView }); setNotice(""); } }}
           className={`min-h-11 cursor-pointer rounded-sm border border-archive-line px-5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 ${view === nextView ? "bg-ink text-paper" : "bg-paper text-ink hover:bg-specimen-paper"}`}>
-          {nextView === "all" ? "All images" : "Favorites"}
+          {({ all: "All images", favorites: "Favorites", received: "Shared with me", sent: "Sent shares" })[nextView]}
         </button>)}
       </div>
+      {showingShares ? <ShareHistory view={view} selectedShareId={search.get("shareId")} /> : <>
       <div className="my-7 flex flex-wrap items-center justify-between gap-3 border-y border-archive-line py-3">
         <p className="text-sm text-muted-ink">{showingFavorites ? (data ? `${data.total} favorite ${data.total === 1 ? "image" : "images"}` : "Your favorite images") : (all.data ? `${all.data.recordCount} of ${all.data.total} saved images loaded · ${groups.length} ${groups.length === 1 ? "group" : "groups"} shown` : "Your saved originals and versions")}</p>
         <button type="button" disabled={loading || deleting || (showingFavorites && favoriteState.rateLimited)} onClick={() => { setNotice(""); refresh(); }} className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm underline disabled:cursor-wait disabled:opacity-50"><RefreshCw size={15} aria-hidden="true" className={loading ? "animate-spin motion-reduce:animate-none" : ""} />{loading ? "Refreshing…" : "Refresh"}</button>
@@ -101,12 +109,12 @@ function ImageArchive() {
         {!showingFavorites && <p className="mb-5 text-xs leading-relaxed text-muted-ink">One card per original, newest activity first. Versions join their original as more images load. Legacy images remain visible as separate groups.</p>}
         <div aria-busy={loading} className="grid items-start gap-6 md:grid-cols-2">
           {showingFavorites ? favorites.data?.items.map((image) => <article key={`${image._id}:${image.urlExpiresAt}`} className="min-w-0 overflow-hidden rounded-sm border border-archive-line bg-paper">
-            <ImageHistoryItem image={image} deleteDisabled={loading || deleting || Boolean(error)} onDelete={(image) => { setSelected(image); setDeleteError(null); setNotice(""); }} />
-          </article>) : groups.map((group) => <ImageGroupCard key={group.key} group={group} incomplete={all.hasMore} deleteDisabled={loading || deleting || Boolean(error)} onDelete={(image) => { setSelected(image); setDeleteError(null); setNotice(""); }} />)}
+            <ImageHistoryItem image={image} onShare={share} deleteDisabled={loading || deleting || Boolean(error)} onDelete={(image) => { setSelected(image); setDeleteError(null); setNotice(""); }} />
+          </article>) : groups.map((group) => <ImageGroupCard key={group.key} group={group} onShare={share} incomplete={all.hasMore} deleteDisabled={loading || deleting || Boolean(error)} onDelete={(image) => { setSelected(image); setDeleteError(null); setNotice(""); }} />)}
         </div>
       </>}
       {!showingFavorites && all.data && all.data.recordCount > 0 && <InfiniteImageLoader hasMore={all.hasMore} loading={all.loadingMore} error={all.loadMoreError}
-        disabled={deleting || Boolean(selected)} onLoadMore={all.loadMore} onRetry={all.retry} />}
+        disabled={deleting || Boolean(selected) || Boolean(shareTarget)} onLoadMore={all.loadMore} onRetry={all.retry} />}
       {showingFavorites && favorites.data && favorites.data.totalPages > 0 && <nav aria-label="Image history pages" className="mt-8 flex flex-wrap items-center justify-between gap-4 border-t border-archive-line pt-6">
         <button type="button" disabled={loading || deleting || Boolean(error) || favoriteState.rateLimited || favoriteState.pending > 0 || favorites.data.page <= 1} onClick={() => { setNotice(""); favorites.setPage(favorites.data!.page - 1); }} className="min-h-11 cursor-pointer rounded-sm border border-specimen-line px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40">Previous</button>
         <p className="text-center text-sm" aria-current="page">Page {favorites.data.page} of {favorites.data.totalPages}
@@ -115,6 +123,8 @@ function ImageArchive() {
         </p>
         <button type="button" disabled={loading || deleting || Boolean(error) || favoriteState.rateLimited || favoriteState.pending > 0 || favorites.data.page >= favorites.data.totalPages} onClick={() => { setNotice(""); favorites.setPage(favorites.data!.page + 1); }} className="min-h-11 cursor-pointer rounded-sm border border-specimen-line px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40">Next</button>
       </nav>}
+      </>}
+      {shareTarget && <ShareImageDialog key={shareTarget.image._id} image={shareTarget.image} returnFocus={shareTarget.trigger} onClose={() => setShareTarget((current) => current === shareTarget ? null : current)} />}
       {selected && <DeleteImageDialog image={selected} pending={deleting} error={deleteError} onCancel={() => { if (!deletion.current) setSelected(null); }} onConfirm={() => { void confirmDelete(); }} onRefresh={() => { setSelected(null); setNotice(""); refresh(); }} />}
     </section>
   );

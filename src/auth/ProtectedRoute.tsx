@@ -7,7 +7,7 @@ export default function ProtectedRoute({ guestOnly = false }: { guestOnly?: bool
   const { isAuthenticated, isRestoring, sessionError, retrySession, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const signInState = { returnTo: location.pathname === "/images" ? "/images" : authDestination(location.state) };
+  const signInState = { returnTo: location.pathname === "/images" ? authDestination({ returnTo: `${location.pathname}${location.search}` }) : authDestination(location.state) };
 
   if (isRestoring || sessionError) {
     return (

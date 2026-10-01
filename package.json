@@ -10,7 +10,8 @@
     "test:auth": "node --test tests/auth.test.mjs",
     "test:images": "node --test tests/images.test.mjs",
     "test:pricing": "node --test tests/pricing.test.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:sharing": "node --test tests/sharing.test.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -21,6 +22,7 @@
     "react-dom": "^19.2.8",
     "react-image-crop": "^11.1.2",
     "react-router-dom": "^7.18.4",
+    "socket.io-client": "^4.8.4",
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
