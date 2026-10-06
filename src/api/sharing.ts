@@ -3,7 +3,7 @@ import { apiClient } from "./client";
 import { tokenStorage } from "../auth/tokenStorage";
 import { getRetryAfterDeadline } from "./imageErrors";
 import { ImageInputError, isImageFormat, usableImageUrl } from "../utils/images";
-import type { Share, SentShare, SharedAccess, ShareNotification, SharingPage } from "./sharing.types";
+import type { Share, ReceivedShare, SentShare, SharedAccess, ShareNotification, SharingPage } from "./sharing.types";
 
 export const isSharingId = (value: unknown): value is string => typeof value === "string" && /^[a-f\d]{24}$/i.test(value);
 const date = (value: unknown): value is string => typeof value === "string" && Number.isFinite(Date.parse(value));
@@ -17,6 +17,12 @@ export function readShare(value: unknown): Share {
   requireValid([item._id, item.senderId, item.recipientId, item.imageId].every(isSharingId) &&
     (item.revokedAt === null || date(item.revokedAt)) && date(item.createdAt) && date(item.updatedAt) && typeof item.available === "boolean");
   return item as unknown as Share;
+}
+export function readReceivedShare(value: unknown): ReceivedShare {
+  const share = readShare(value);
+  const item = record(value);
+  requireValid(item.senderEmail === null || (typeof item.senderEmail === "string" && item.senderEmail.trim().length > 0));
+  return { ...share, senderEmail: item.senderEmail } as ReceivedShare;
 }
 export function readSentShare(value: unknown): SentShare {
   const share = readShare(value);
@@ -68,7 +74,7 @@ async function list<T extends { _id: string }>(path: string, page: number, limit
   if (!Number.isInteger(page) || page < 1 || page > 100000 || !Number.isInteger(limit) || limit < 1 || limit > 50) throw new ImageInputError("Choose a valid page and page size.");
   return request(path, async () => readPage((await apiClient.get<unknown>(path, { params: { page, limit }, signal })).data, page, limit, read));
 }
-export const getReceivedShares = (page: number, limit: number, signal: AbortSignal) => list("/api/shares/received", page, limit, signal, readShare);
+export const getReceivedShares = (page: number, limit: number, signal: AbortSignal) => list("/api/shares/received", page, limit, signal, readReceivedShare);
 export const getSentShares = (page: number, limit: number, signal: AbortSignal) => list("/api/shares/sent", page, limit, signal, readSentShare);
 export const getNotifications = (page: number, limit: number, signal: AbortSignal) => list("/api/notifications", page, limit, signal, readNotification);
 export async function getUnreadCount(signal: AbortSignal) {

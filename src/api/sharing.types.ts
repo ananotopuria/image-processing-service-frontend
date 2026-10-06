@@ -3,6 +3,9 @@ export interface Share {
   _id: string; senderId: string; recipientId: string; imageId: string;
   revokedAt: string | null; createdAt: string; updatedAt: string; available: boolean;
 }
+export interface ReceivedShare extends Share {
+  senderEmail: string | null;
+}
 export interface SentShare extends Share {
   recipientEmail: string | null;
   image: { filename: string; format: ImageFormat } | null;

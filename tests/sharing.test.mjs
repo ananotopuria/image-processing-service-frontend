@@ -8,7 +8,7 @@ import { MemoryRouter } from "react-router-dom";
 import { createServer } from "vite";
 
 const stored = new Map();
-globalThis.window = { localStorage: { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value), removeItem: (key) => stored.delete(key) }, addEventListener() {} };
+globalThis.window = { localStorage: { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value), removeItem: (key) => stored.delete(key) }, addEventListener() {}, removeEventListener() {} };
 process.env.VITE_API_URL = "https://api.example.test";
 const vite = await createServer({ server: { middlewareMode: true, hmr: false, watch: null }, logLevel: "error" });
 const api = await vite.ssrLoadModule("/src/api/sharing.ts");
@@ -20,6 +20,7 @@ const { getImageById } = await vite.ssrLoadModule("/src/api/images.ts");
 const { default: SentSharePreview, ResolvedPreview } = await vite.ssrLoadModule("/src/components/sharing/SentSharePreview.tsx");
 const { default: SharingSession } = await vite.ssrLoadModule("/src/sharing/SharingSession.tsx");
 const { connectSharing } = await vite.ssrLoadModule("/src/sharing/connection.ts");
+const { createNotificationSound } = await vite.ssrLoadModule("/src/sharing/notificationSound.ts");
 const { AuthContext } = await vite.ssrLoadModule("/src/auth/AuthContext.ts");
 const { default: ShareImageDialog } = await vite.ssrLoadModule("/src/components/sharing/ShareImageDialog.tsx");
 const { default: ShareHistory } = await vite.ssrLoadModule("/src/components/sharing/ShareHistory.tsx");
@@ -30,7 +31,7 @@ const { default: PublicHeader } = await vite.ssrLoadModule("/src/components/head
 const { groupImagesByOriginal } = await vite.ssrLoadModule("/src/utils/imageHistory.ts");
 const { authDestination } = await vite.ssrLoadModule("/src/auth/destination.ts");
 const ids = Array.from({ length: 7 }, (_, index) => (index + 1).toString(16).padStart(24, "0"));
-const share = { _id: ids[0], imageId: ids[1], senderId: ids[2], recipientId: ids[3], revokedAt: null, createdAt: "2026-09-30T12:00:00Z", updatedAt: "2026-09-30T12:00:00Z", available: true };
+const share = { _id: ids[0], imageId: ids[1], senderId: ids[2], senderEmail: null, recipientId: ids[3], revokedAt: null, createdAt: "2026-09-30T12:00:00Z", updatedAt: "2026-09-30T12:00:00Z", available: true };
 const notification = { _id: ids[4], type: "image.shared", shareId: share._id, readAt: null, createdAt: share.createdAt, updatedAt: share.updatedAt, available: true };
 const image = { _id: share.imageId, kind: "transformed", filename: "photo.webp", format: "webp", mimeType: "image/webp", width: 800, height: 600, url: "https://storage.example.test/photo.webp?signature=preview", downloadUrl: "https://storage.example.test/photo.webp?response-content-disposition=attachment&signature=download", urlExpiresAt: "2099-01-01T00:00:00Z" };
 const sentShare = { ...share, recipientEmail: "recipient@example.com", image: { filename: "photo.webp", format: "webp" } };
@@ -172,6 +173,120 @@ function socketFactory() {
   const factory = (url, options) => { settings = { url, options }; return socket; };
   return { socket, factory, settings: () => settings };
 }
+
+function mockAudio(t) {
+  const instances = [];
+  const gestures = new EventTarget();
+  const listeners = new Set();
+  t.mock.method(window, "addEventListener", (type, listener) => {
+    listeners.add(listener); gestures.addEventListener(type, listener);
+  });
+  t.mock.method(window, "removeEventListener", (type, listener) => {
+    listeners.delete(listener); gestures.removeEventListener(type, listener);
+  });
+  globalThis.Audio = class extends EventTarget {
+    constructor(src) { super(); this.src = src; this.calls = []; this.pauses = 0; instances.push(this); }
+    play() {
+      this.calls.push({ muted: this.muted, time: this.currentTime });
+      if (this.throwOnPlay) throw new Error("Playback unavailable");
+      return this.rejectPlay ? Promise.reject(new DOMException("Blocked", "NotAllowedError")) : Promise.resolve();
+    }
+    pause() { this.pauses++; }
+    finish() { this.dispatchEvent(new Event("ended")); }
+  };
+  t.after(() => { delete globalThis.Audio; });
+  return { instances, gestures, listeners };
+}
+
+const liveEvent = (notificationId = notification._id) => ({ notificationId, type: "image.shared", shareId: share._id, createdAt: notification.createdAt });
+
+test("only new socket events sound; initial history, refetch, reconnect and renders remain silent", async (t) => {
+  const { instances } = mockAudio(t);
+  const { socket, factory } = socketFactory();
+  const stop = connectSharing(tokenStorage.getToken(), factory); t.after(stop);
+  const audio = instances[0];
+  assert.equal(audio.src, "/sounds/notification.wav");
+  socket.emit("connect"); await settle();
+  await sharingState.notifications(1, true);
+  sharingState.recover(); await settle();
+  render(SharingSession); render(SharingSession);
+  assert.equal(audio.calls.length, 0);
+  socket.emit("notification.created", liveEvent()); await settle();
+  assert.equal(audio.calls.length, 1);
+  assert.equal(audio.calls[0].muted, false);
+  assert.match(sharingState.getSnapshot().toast, /shared with you/);
+  assert.equal(sharingState.getSnapshot().notifications.data.items[0]._id, notification._id);
+  socket.emit("notification.created", liveEvent());
+  socket.emit("notification.created", liveEvent("bad"));
+  socket.emit("connect"); await settle();
+  assert.equal(audio.calls.length, 1);
+  // Distinct events arriving in a burst each get a full chime on the same element.
+  socket.emit("notification.created", liveEvent(ids[5]));
+  socket.emit("notification.created", liveEvent(ids[6]));
+  audio.finish(); await settle(); audio.finish(); await settle(); audio.finish();
+  assert.equal(audio.calls.length, 3);
+  assert.equal(instances.length, 1);
+  await sharingState.notifications(1, true); render(SharingSession);
+  assert.equal(audio.calls.length, 3);
+});
+
+test("sound and socket cleanup cancel queued chimes and preserve deduplication across remounts", async (t) => {
+  const { instances, gestures, listeners } = mockAudio(t);
+  const { socket, factory } = socketFactory();
+  const stop = connectSharing(tokenStorage.getToken(), factory);
+  const staleListener = socket.listeners("notification.created")[0];
+  socket.emit("notification.created", liveEvent());
+  socket.emit("notification.created", liveEvent(ids[5]));
+  stop(); stop(); await settle();
+  assert.equal(socket.listenerCount("notification.created"), 0);
+  assert.equal(listeners.size, 0);
+  gestures.dispatchEvent(new Event("pointerup")); instances[0].finish(); staleListener(liveEvent(ids[6]));
+  assert.equal(instances[0].calls.length, 1);
+  const stopAgain = connectSharing(tokenStorage.getToken(), factory); t.after(stopAgain);
+  assert.equal(socket.listenerCount("notification.created"), 1);
+  socket.emit("notification.created", liveEvent());
+  assert.equal(instances[1].calls.length, 0);
+  socket.emit("notification.created", liveEvent(ids[6])); await settle();
+  assert.equal(instances[1].calls.length, 1);
+  tokenStorage.clearToken();
+  assert.equal(listeners.size, 0);
+  assert.equal(socket.listenerCount("notification.created"), 0);
+});
+
+test("autoplay rejection is silent, drops blocked events and allows future audio after interaction", async (t) => {
+  const { instances, gestures, listeners } = mockAudio(t);
+  const sound = createNotificationSound(); t.after(() => sound.dispose());
+  const audio = instances[0]; audio.rejectPlay = true;
+  sound.play(); sound.play(); await settle();
+  assert.equal(audio.calls.length, 1);
+  gestures.dispatchEvent(new Event("keydown")); await settle();
+  assert.equal(audio.calls.at(-1).muted, true);
+  assert.equal(listeners.size, 1); // A denied unlock may be tried on a later gesture.
+  audio.rejectPlay = false;
+  gestures.dispatchEvent(new Event("pointerup")); await settle();
+  assert.equal(audio.muted, false);
+  assert.equal(listeners.size, 0);
+  assert.equal(audio.calls.filter((call) => !call.muted).length, 1);
+  sound.play(); await settle();
+  assert.equal(audio.calls.filter((call) => !call.muted).length, 2);
+  audio.finish();
+  audio.throwOnPlay = true;
+  assert.doesNotThrow(() => sound.play()); await settle();
+});
+
+test("an event during silent priming plays once, and disposal during priming cannot replay it", async (t) => {
+  const { instances, gestures } = mockAudio(t);
+  for (const disposeEarly of [false, true]) {
+    const sound = createNotificationSound();
+    const audio = instances.at(-1);
+    gestures.dispatchEvent(new Event("pointerup"));
+    sound.play();
+    if (disposeEarly) sound.dispose();
+    await settle();
+    assert.equal(audio.calls.filter((call) => !call.muted).length, disposeEarly ? 0 : 1);
+    sound.dispose();
+  }
+});
 
 test("Socket.IO uses the origin namespace, raw JWT and Engine.IO path with listeners before connecting", async () => {
   const { socket, factory, settings } = socketFactory();
@@ -609,23 +724,24 @@ test("share view renders loaded versus total counts, bottom loading/retry/end st
 });
 
 
-test("received cards use the share creation timestamp and do not invent sender emails", async () => {
+test("received cards use the share creation timestamp and backend sender email", async () => {
   const sharedAt = "2026-09-15T09:10:00Z";
-  const receivedShare = { ...share, createdAt: sharedAt };
+  const receivedShare = { ...share, senderEmail: "sender@example.com", createdAt: sharedAt };
   apiClient.defaults.adapter = async (config) => response(config, page([receivedShare]));
   for (const reset of [() => {}, () => sharingState.reset(), () => { tokenStorage.clearToken(); tokenStorage.setToken("new-received-session"); }]) {
     reset(); await sharingState.received.refresh();
     const markup = render(ShareHistory, { view: "received", selectedShareId: null });
-    assert.match(markup, /Shared by: Email unavailable/);
+    assert.match(markup, /Shared by: sender@example.com/);
     assert.match(markup, /Shared on: <time dateTime="2026-09-15T09:10:00Z"/);
     assert.doesNotMatch(markup, /owner@example.test|recipient@example.com/);
     const selected = render(ShareHistory, { view: "received", selectedShareId: share._id });
+    assert.match(selected, /Shared by: sender@example.com/);
     assert.equal((selected.match(/Shared on:/g) ?? []).length, 1);
     assert.match(selected, /dateTime="2026-09-15T09:10:00Z"/);
   }
 });
 
-test("unavailable received shares retain their dates and a missing sender email cannot break the list", async () => {
+test("unavailable received shares retain their dates and a null sender email keeps the fallback", async () => {
   const unavailable = { ...share, revokedAt: share.updatedAt, available: false };
   apiClient.defaults.adapter = async (config) => response(config, page([unavailable, { ...share, _id: ids[6] }]));
   await sharingState.received.refresh();

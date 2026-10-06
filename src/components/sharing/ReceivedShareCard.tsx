@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { useSharedImageAccess } from "../../hooks/useSharedImageAccess";
 import LoadingImage from "../images/LoadingImage";
-import type { Share } from "../../api/sharing.types";
+import type { ReceivedShare } from "../../api/sharing.types";
 import { imageDate } from "../../utils/imageHistory";
 
-export default function ReceivedShareCard({ shareId, share, available = true, revision, selected = false }: { shareId: string; share?: Share; available?: boolean; revision: number; selected?: boolean }) {
+export default function ReceivedShareCard({ shareId, share, available = true, revision, selected = false }: { shareId: string; share?: ReceivedShare; available?: boolean; revision: number; selected?: boolean }) {
   const { image, share: accessedShare, loading, unavailable, error, expired, refresh, download } = useSharedImageAccess(shareId, available, revision);
   const metadata = accessedShare ?? (share?._id === shareId ? share : null);
   const sharedOn = imageDate(metadata?.createdAt);
@@ -20,9 +20,7 @@ export default function ReceivedShareCard({ shareId, share, available = true, re
     <div className="p-5"><p className="font-mono text-[10px] text-muted-ink">{selected ? "SELECTED SHARE" : "SHARED WITH YOU"}</p>
       <h3 ref={heading} tabIndex={selected ? -1 : undefined} className="mt-3 wrap-anywhere font-editorial text-2xl">{image?.filename ?? "Shared image"}</h3>
       {image && <p className="mt-3 text-xs text-muted-ink">{image.format.toUpperCase()}{image.width && image.height ? ` · ${image.width} × ${image.height} px` : ""}</p>}
-      {/* The verified API exposes senderId only. Do not infer an email or a
-          deleted account from it; see the backend requirement in the docs. */}
-      <p className="mt-3 wrap-anywhere text-xs leading-relaxed text-muted-ink">Shared by: Email unavailable</p>
+      <p className="mt-3 wrap-anywhere text-xs leading-relaxed text-muted-ink">Shared by: {(share?._id === shareId ? share.senderEmail : null) ?? "Email unavailable"}</p>
       <p className="mt-2 text-xs leading-relaxed text-muted-ink">{metadata && sharedOn
         ? <>Shared on: <time dateTime={metadata.createdAt}>{sharedOn}</time></>
         : loading ? "Loading share date…" : "Share date unavailable"}</p>

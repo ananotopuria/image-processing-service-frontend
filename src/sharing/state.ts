@@ -1,11 +1,11 @@
 import { tokenStorage } from "../auth/tokenStorage";
 import { getNotifications, getReceivedShares, getSentShares, getUnreadCount, markNotificationRead, sharingError } from "../api/sharing";
-import type { Share, SentShare, ShareNotification, SharingPage } from "../api/sharing.types";
+import type { ReceivedShare, SentShare, ShareNotification, SharingPage } from "../api/sharing.types";
 import { createInfiniteShares, emptyShareCollection } from "./infiniteShares";
 
 export interface Collection<T> { page: number; data: SharingPage<T> | null; loading: boolean; error: string | null }
 const collection = <T>(): Collection<T> => ({ page: 1, data: null, loading: false, error: null });
-const initial = () => ({ received: emptyShareCollection<Share>(), sent: emptyShareCollection<SentShare>(), notifications: collection<ShareNotification>(),
+const initial = () => ({ received: emptyShareCollection<ReceivedShare>(), sent: emptyShareCollection<SentShare>(), notifications: collection<ShareNotification>(),
   unreadCount: null as number | null, unreadError: null as string | null, accessRevision: 0, toast: "", toastRevision: 0, connectionError: "" });
 
 export function createSharingState() {
@@ -84,10 +84,11 @@ export function createSharingState() {
       void sent.refresh();
     },
     notify(notificationId: string) {
-      if (seen.has(notificationId)) return;
+      if (seen.has(notificationId)) return false;
       seen.add(notificationId);
       publish({ ...state, toast: "An image was shared with you." });
       recover();
+      return true;
     },
     dismissToast: () => publish({ ...state, toast: "" }),
     connectionError: (message: string) => publish({ ...state, connectionError: message }),
